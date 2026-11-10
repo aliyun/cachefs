@@ -1,0 +1,236 @@
+/*
+ * Copyright 2025 Alibaba Cloud, Inc. or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package cachefs;
+
+option go_package = ".;cachefs";
+
+message LoadCacheRequest{
+  repeated string paths = 1;
+  bool background = 2;
+  bool load_all = 3;
+  bool force = 4;
+  bool broadcast = 5;
+  bool cancel = 6;
+}
+
+message LoadCacheResponse{
+  uint64 load_count = 1;
+  uint64 load_bytes = 2;
+}
+
+message ClearCacheRequest{
+  repeated string paths = 1;
+  bool broadcast = 2;
+  bool clear_burst = 3;
+}
+
+message ClearCacheResponse{
+  uint64 clear_count = 1;
+  uint64 clear_bytes = 2;
+}
+
+message SourceReadyRequest{
+  bool background = 1;
+}
+
+message SourceReadyResponse{
+  uint64 load_count = 1;
+  uint64 load_bytes = 2;
+}
+
+message MetaReadyRequest{}
+message MetaReadyResponse{}
+
+message DataReadyRequest{}
+message DataReadyResponse{}
+
+message GetPidRequest{}
+
+message GetPidResponse{
+  int64 pid = 1;
+}
+
+message UnmountRequest{
+  int64 pid = 1;
+  string name = 2;
+}
+
+message UnmountResponse{}
+
+message FileRange {
+  uint64 start = 1;
+  uint64 length = 2;
+}
+
+message GetFileChunksRequest{
+  uint64 inode = 1;
+  // Max time to wait for share admission (vfs shared-bytes quota) in
+  // milliseconds. 0 means wait forever.
+  uint32 wait_timeout_ms = 2;
+  // Absent means the whole file.
+  FileRange range = 3;
+}
+
+message ReleaseFileChunksRequest{
+  uint32 request_id = 1;
+}
+
+message ReleaseFileChunksResponse{}
+
+message FileChunk{
+  uint32 block_index = 1;
+  // less than or equal to largest block size
+  uint32 size = 2;
+}
+
+message GetFileChunksResponse{
+  uint64 file_size = 1;
+  // less than or equal to largest block size
+  uint32 block_size = 2;
+  repeated FileChunk chunks = 3;
+  uint32 request_id = 4;     // request identifier
+  uint32 fd_resp_size = 5;
+}
+
+message GetPeersRequest{
+  // raw indicates whether to return the raw serf cluster members
+  // instead of the cached member list
+  bool raw = 1;
+  // port indicates whether to include port information in the returned peer addresses;
+  // if false, only IP addresses are returned
+  bool port = 2;
+}
+
+message GetPeersResponse{
+  repeated string peers = 1;
+}
+
+service CachefsApi{
+  rpc LoadCache(LoadCacheRequest) returns(LoadCacheResponse);
+  rpc ClearCache(ClearCacheRequest) returns(ClearCacheResponse);
+  rpc SourceReady(SourceReadyRequest) returns(SourceReadyResponse);
+  rpc MetaReady(MetaReadyRequest) returns(MetaReadyResponse);
+  rpc DataReady(DataReadyRequest) returns(DataReadyResponse);
+  rpc GetPid(GetPidRequest) returns(GetPidResponse);
+  rpc Unmount(UnmountRequest) returns(UnmountResponse);
+  rpc GetFileChunks(GetFileChunksRequest) returns(GetFileChunksResponse);
+  rpc ReleaseFileChunks(ReleaseFileChunksRequest) returns(ReleaseFileChunksResponse);
+  rpc GetPeers(GetPeersRequest) returns(GetPeersResponse);
+  rpc GetServerInfo(GetServerInfoRequest) returns(GetServerInfoResponse);
+  rpc SetCacheSize(SetCacheSizeRequest) returns(SetCacheSizeResponse);
+  rpc GetLoadStats(GetLoadStatsRequest) returns(GetLoadStatsResponse);
+}
+
+message GetServerInfoRequest {}
+
+message GetServerInfoResponse {
+  uint32 block_size       = 1;
+  int64  cache_size       = 2;
+  int64  burst_cache_size = 3;
+  int64  pid              = 4;
+  int64  share_cap        = 5; // bytes the GetFileChunks API may lock (burst cache size minus share reserve)
+}
+
+message SetCacheSizeRequest {
+  int64 cache_size       = 1; // bytes; -1 = keep current value
+  int64 burst_cache_size = 2; // bytes; -1 = keep current value; -2 = restore startup-configured value; effective value is always >= cache_size
+  bool  broadcast        = 3;
+}
+
+message SetCacheSizeResponse {
+  int64  cache_size       = 1;
+  int64  burst_cache_size = 2;
+  uint64 evict_count      = 3; // blocks evicted due to capacity shrink
+  uint64 evict_bytes      = 4; // bytes evicted due to capacity shrink
+  int64  share_cap        = 5; // GetFileChunks share cap after the update
+}
+
+message GetLoadStatsRequest {
+  // Besides returning the stats, also write the rendered report into the mount
+  // process's own log, so it survives the process exit.
+  bool log = 1;
+}
+
+// GetLoadStats returns data-loading statistics accumulated since process start.
+//
+// Unlike the other RPCs here, the payload is JSON rather than typed fields.
+// This is a human-readable diagnostic report whose field set is expected to grow,
+// and JSON keeps that growth free for the Rust/Python SDKs (which pass the bytes
+// through untouched) instead of costing a hand-written mapping in each of them.
+//
+// payload is UTF-8 JSON with the schema below. Fields may be added, but are
+// never removed or renamed:
+//
+//   {
+//     "uptime_seconds": 3600,           // process uptime, the denominator for every counter below
+//     "source": {
+//       "reads": 12345,                 // source reads (blocks fetched from the source filesystem)
+//       "bytes": 51539607552,           // bytes read from source
+//       "errors": 2,                    // failed source reads
+//       "in_flight": 3,                 // source reads in progress right now
+//       "sourceless_retry": 0,          // peer-load retries in sourceless meta-consumer mode
+//       "sourceless_retry_bytes": 0,
+//       "latency": {                    // successful source reads only, see note below
+//         "count": 12343,
+//         "sum": 185.1,                 // seconds
+//         "buckets": [ {"le": 0.01, "n": 4000} ]  // n is cumulative: observations <= le
+//       }
+//     },
+//     "peer": {
+//       "hits": 8123,                   // peer loads that returned data
+//       "miss": 412,                    // peer loads where every candidate failed; the read fell through to source
+//       "hit_bytes": 33285996544,
+//       "miss_bytes": 1717986918,
+//       "timeouts": 1180,               // per-peer read timeouts; can far exceed miss, since one
+//                                       // miss may have timed out against many peers
+//       "blacklisted": 7,               // peers skipped because they were blacklisted
+//       "checksum_errors": 0,
+//       "in_flight": 1,
+//       "latency": { }                  // successful peer loads only, same shape as source.latency
+//     }
+//   }
+//
+// Things to know before drawing conclusions from this:
+//
+//   1. reads and hits count successes only. Failures go to errors and miss
+//      respectively and are never added to them, and the latency histograms are
+//      observed on the same success paths, so latency.count tracks reads / hits
+//      rather than falling short of them. Everything except errors/miss
+//      describes the successful subset.
+//   2. Time burned by a load that ultimately failed is recorded nowhere.
+//      timeouts and blacklisted indicate that waste exists, but it cannot be
+//      converted into seconds.
+//   3. peer.miss and source.reads are NOT two views of the same requests and
+//      should not be subtracted from one another. Peer lookups are counted in
+//      the cache layer and happen for prefetch/fill as well as foreground
+//      reads, while source.reads is counted in the VFS layer for foreground
+//      source reads only. Expect peer.miss to exceed source.reads on a node
+//      with no peers -- that is normal, not a lost-request count.
+//   4. Quantiles are derived from the buckets, which are exponential. Source
+//      read buckets start at 10ms, peer read buckets at 1ms, so anything faster
+//      collapses into the first bucket and every percentile reads as that
+//      bound. When p50/p90/p99 are all identical, latency.sum/count (rendered
+//      as avg) is the only figure with resolution left.
+//
+// In daemon (fuse-layer) mode data loading happens in a separate process, so
+// this RPC returns an error rather than an all-zero report.
+message GetLoadStatsResponse {
+  bytes  payload = 1;   // JSON, schema above
+  string text    = 2;   // pre-rendered single-line report, ready to print
+}

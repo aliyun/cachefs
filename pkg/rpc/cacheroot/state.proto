@@ -1,0 +1,66 @@
+/*
+ * Copyright 2026 Alibaba Cloud, Inc. or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package cachefs;
+
+option go_package = ".;cachefs";
+
+// Per-instance cache state. Served on cachePort by the CachefsState service,
+// implemented by every CacheFS instance.
+service CachefsState {
+  rpc GetCacheState(GetCacheStateRequest) returns (CacheState);
+  // Query which nodes are known to hold which blocks of which targets. By
+  // default returns this node's cluster tracker (metaMap) via trackerSnapshot;
+  // when local is set, returns this node's own authoritative cache distribution.
+  rpc GetTrackerInfo(GetTrackerInfoRequest) returns (GetTrackerInfoResponse);
+}
+
+message GetCacheStateRequest {}
+
+message GetTrackerInfoRequest {
+  repeated string paths = 1; // optional path filter; empty means the whole local tracker
+  bool local = 2; // when true, return this node's own authoritative cache distribution (local block cache) instead of the cluster tracker (metaMap)
+}
+
+// Node-aware view of the local tracker: per target, the peer nodes and the
+// block numbers each node holds.
+message GetTrackerInfoResponse {
+  repeated TargetTracker targets = 1;
+}
+
+message TargetTracker {
+  string target = 1;
+  repeated NodeBlocks nodes = 2;
+}
+
+message NodeBlocks {
+  string node = 1;
+  repeated uint32 blocks = 2; // all set block numbers held by this node
+}
+
+// Standalone message so it can be reused verbatim by CacheRootCluster.GetCacheStats.
+message CacheState {
+  uint64 capacity        = 1; // local cache capacity (bytes)
+  uint64 used            = 2; // local cache used (bytes)
+  uint64 hashhit_blocks  = 3; // resident blocks owned by this node via hash ring
+  uint64 hashhit_bytes   = 4; // bytes of the above blocks
+  uint64 cached_blocks   = 5; // total cached blocks on this node
+  uint64 cached_bytes    = 6; // total cached bytes on this node
+  uint64 pinned_blocks   = 7; // resident blocks that are pinned
+  uint64 pinned_bytes    = 8; // bytes of the above blocks
+}

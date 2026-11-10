@@ -1,0 +1,75 @@
+/*
+ * Copyright 2026 Alibaba Cloud, Inc. or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package cachefs;
+
+import "validate/validate.proto";
+import "pkg/rpc/cacheroot/state.proto"; // reuse CacheState
+
+option go_package = ".;cachefs";
+
+// Cluster-level management interface, implemented by the vfs layer and served
+// only by the cacheroot cluster.
+service CacheRootCluster {
+  rpc GetCacheRatio(GetCacheRatioRequest) returns (GetCacheRatioResponse);
+  rpc GetCacheStats(GetCacheStatsRequest) returns (GetCacheStatsResponse);
+}
+
+// Batch: query cache progress of multiple directories in one call.
+message GetCacheRatioRequest {
+  // Directory path list; empty list or all-empty paths defaults to root "/"; empty entries are ignored; each <= 4096.
+  repeated string paths = 1 [(validate.rules).repeated = {
+    items: {string: {max_len: 4096}}
+  }];
+  // When true, also break down the cached amount per cluster node (PathCacheRatio.nodes).
+  // Computed locally from the tracker view; only requested on demand to avoid the extra work.
+  bool verbose = 2;
+}
+message GetCacheRatioResponse {
+  repeated PathCacheRatio ratios = 1; // one-to-one with request paths
+}
+// Per-node share of a path's cached data (raw amounts; caller computes the percentage
+// against the path's total). A block replicated on multiple nodes is counted for each
+// holder, so nodes may sum to more than the path's cluster-cached total.
+message NodeCacheState {
+  string node          = 1; // node identity (serf member key / addr)
+  uint64 cached_blocks = 2; // blocks of this path cached on this node
+  uint64 cached_bytes  = 3; // bytes of this path cached on this node
+}
+message PathCacheRatio {
+  string path          = 1; // echo back path for alignment safety
+  bool   ok            = 2; // whether this path succeeded (false if missing / no perm etc.)
+  string error         = 3; // reason when ok=false
+  uint64 total_blocks  = 4; // total blocks under the dir (block-basis denominator)
+  uint64 cached_blocks = 5; // blocks cached in the cluster (block-basis numerator)
+  uint64 total_bytes   = 6; // total bytes under the dir (byte-basis denominator)
+  uint64 cached_bytes  = 7; // bytes cached in the cluster (byte-basis numerator)
+  // no ratio field; caller computes it on the block or byte basis
+  repeated NodeCacheState nodes = 8; // per-node breakdown, populated only when request.verbose
+}
+
+message GetCacheStatsRequest {}
+message GetCacheStatsResponse {
+  repeated InstanceCacheState instances = 1;
+}
+message InstanceCacheState {
+  string     node  = 1; // instance identity (serf member key / addr)
+  bool       ok    = 2; // whether fanout to this instance succeeded
+  string     error = 3; // failure reason (when ok=false)
+  CacheState state = 4; // reuse the per-instance state shape
+}
