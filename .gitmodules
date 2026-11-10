@@ -1,0 +1,4 @@
+[submodule "deps/yalantinglibs"]
+	path = deps/yalantinglibs
+	url = https://github.com/alibaba/yalantinglibs.git
+	branch = main

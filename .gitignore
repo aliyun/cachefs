@@ -1,0 +1,31 @@
+# ignore cachefs file under root dir
+/cachefs
+/cachefs*.rpm
+
+# other cachefs path not ignored
+!*/cachefs
+
+# Build artifacts
+*.o
+dist/
+coro_rpc_lib/build
+coro_rpc_lib/libcoro_rpc.a
+
+# Test coverage artifacts, from "make test" and from the smoke test
+/cov-*.out
+/coverage-result.txt
+/merged-coverage.out
+/gocover/
+
+# Editor/IDE files
+.vscode
+.idea
+*.sw[po]
+.DS_Store
+
+# Development tools
+.qoder
+IFLOW.md
+AGENTS.md
+go.work
+go.work.sum

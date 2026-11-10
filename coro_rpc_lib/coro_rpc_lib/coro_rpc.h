@@ -1,0 +1,96 @@
+#pragma once
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+  int ec;
+  char *err_msg;
+  uint64_t len;
+} rpc_result;
+
+typedef struct {
+  int connect_timeout_sec;
+  int req_timeout_sec;
+  int idle_sec;
+
+  // number of connect retries on top of the guaranteed initial attempt.
+  // 0 = no retry (fail on first connect timeout); negative = keep library default (3).
+  int connect_retry_count;
+
+  // if enable rdma, local_ip should be a rdma network interface card name
+  char *local_ip;
+  bool enable_ib;
+
+  // min recv RDMA buffer used by per-connection in client pool, default to 4
+  uint32_t min_recv_buf_count;
+  // max recv RDMA buffer used by per-connection in client pool, default to 32
+  // must be larger than min_recv_buf_count
+  uint32_t max_recv_buf_count;
+} client_config;
+
+typedef struct {
+  int parallel;
+  bool enable_ib;
+
+  // min recv RDMA buffer used by per-connection in server, default to 4
+  uint32_t min_recv_buf_count;
+  // max recv RDMA buffer used by per-connection in server, default to 32
+  // must be larger than min_recv_buf_count
+  uint32_t max_recv_buf_count;
+  // rdma network interface card name
+  char *device_name;
+} server_config;
+
+typedef struct {
+  uint32_t buffer_size;      // buffer size in byte, default to 2MiB
+  uint64_t max_memory_usage; // max pool size in byte, default to 4GiB
+} pool_config;
+
+typedef struct {
+  uint64_t req_id;
+  uint32_t svc_id;
+} load_request;
+
+// ip:port
+extern void load_service(void *ctx, uint32_t svc_id, uint64_t req_id);
+extern void *response_msg(void *ctx, char *msg, uint64_t size);
+extern void response_error(void *ctx, uint16_t err_code, const char *err_msg);
+extern rpc_result wait_response_finish(void *p);
+extern void *start_rpc_server(char *addr, server_config conf);
+extern void stop_rpc_server(void *server);
+
+extern void config_buffer_pool(pool_config conf);
+extern void *create_client_pool(char *addr, client_config conf);
+extern void free_client_pool(void *pool);
+extern uint64_t flush_client_pool(void *pool, char *addr);
+extern rpc_result load(void *pool, load_request req_info, char *dest,
+                       uint64_t dest_len);
+extern uint64_t global_memory_usage();
+extern uint64_t global_history_max_memory_usage();
+extern char* get_all_rdma_devs();
+
+/*
+enum log_level {
+  NONE = 0,
+  TRACE,
+  DEBUG,
+  INFO,
+  WARN,
+  WARNING = WARN,
+  ERROR,
+  CRITICAL,
+  FATAL = CRITICAL,
+};
+*/
+extern void init_rpc_log(char *log_filename, int log_level,
+                         uint64_t max_file_size, uint64_t max_file_num,
+                         bool async);
+extern void flush_rpc_log();
+
+#ifdef __cplusplus
+}
+#endif

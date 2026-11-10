@@ -1,0 +1,19 @@
+# common info needed by build scripts
+
+source build/version
+
+export VERSION
+export TAG=${TAG:-"$VERSION"}
+REGISTRY=${REGISTRY:-eci-nydus-registry.cn-hangzhou.cr.aliyuncs.com}
+REG_NS=${REG_NS:-cachefs}
+
+BUILD_MODE=${BUILD_MODE:-"dev"}
+GIT_COMMIT=$(git rev-parse --verify HEAD --short=7)
+if [ "$BUILD_MODE" != "release" ]; then
+	TAG=$TAG.$GIT_COMMIT
+fi
+
+get_image_name()
+{
+	echo "${REGISTRY}/${REG_NS}/cachefs:${TAG}"
+}

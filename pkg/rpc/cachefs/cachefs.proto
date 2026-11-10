@@ -1,0 +1,57 @@
+/*
+ * Copyright 2023 Alibaba Cloud, Inc. or its affiliates.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package cachefs;
+
+import "validate/validate.proto";
+
+option go_package = ".;cachefs";
+
+message LoadRequest{
+  // target path is within 4096
+  string target = 1 [(validate.rules).string = {min_len: 1, max_len: 4096}];
+  uint32 block_num = 2;
+  // less than or equal to largest block size
+  uint32 len = 3 [(validate.rules).uint32 = {gte: 1, lte: 134217728}];
+  // only support 4M 8M 16M 32M 64M 128M block sizes
+  uint32 block_size = 4 [(validate.rules).uint32 = {in: [4194304,8388608,16777216,33554432,67108864,134217728]}];
+  string serf_group = 5 [(validate.rules).string = {min_len: 0, max_len: 256}];
+  string cache_root_group = 6 [(validate.rules).string = {min_len: 0, max_len: 256}];
+}
+
+message LoadResponse{
+  bytes data = 1;
+  string addr = 2 [(validate.rules).string = {min_len: 0, max_len: 4096}];
+  string hash = 3 [(validate.rules).string = {min_len: 0, max_len: 128}];
+  uint64 req_id = 4;
+  uint32 svc_id = 5;
+}
+
+message ExchangeTrackerRequest{
+  string serf_group = 1 [(validate.rules).string = {min_len: 0, max_len: 256}];
+  bytes meta_info = 2;
+}
+
+message ExchangeTrackerResponse{
+  bytes meta_info = 1;
+}
+
+service CachefsCache{
+  rpc Load(stream LoadRequest) returns(stream LoadResponse);
+  rpc ExchangeTracker(ExchangeTrackerRequest) returns(ExchangeTrackerResponse);
+}
