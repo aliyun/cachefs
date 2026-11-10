@@ -18,7 +18,7 @@ require (
 	github.com/juicedata/godaemon v0.0.0-20210629045518-3da5144a127d
 	github.com/juju/ratelimit v1.0.1
 	github.com/mattn/go-isatty v0.0.14
-	github.com/prometheus/client_golang v1.11.0
+	github.com/prometheus/client_golang v1.11.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/pyroscope-io/client v0.2.1
 	github.com/sirupsen/logrus v1.9.3
