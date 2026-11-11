@@ -86,7 +86,7 @@ func statsAction(ctx *cli.Context) error {
 		Interval: interval,
 	}
 
-	setup(ctx, 1)
+	setup(ctx, 1, true)
 	mp := ctx.Args().First()
 	schema := ctx.String("schema")
 

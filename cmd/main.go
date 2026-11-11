@@ -72,8 +72,10 @@ func Main(args []string) error {
 	return app.Run(utils.ReorderOptions(app, args))
 }
 
-// Check number of positional arguments, set logger level and setup agent if needed
-func setup(c *cli.Context, n int) {
+// Check number of positional arguments, set logger level and setup agent if needed.
+// defaultNoAgent turns the debug agents off by default for short-lived commands;
+// an explicit --no-agent=false still enables them.
+func setup(c *cli.Context, n int, defaultNoAgent bool) {
 	if c.NArg() < n {
 		fmt.Printf("ERROR: This command requires at least %d arguments\n", n)
 		fmt.Printf("USAGE:\n   cachefs %s [command options] %s\n", c.Command.Name, c.Command.ArgsUsage)
@@ -100,7 +102,11 @@ func setup(c *cli.Context, n int) {
 		utils.SetLogID("[" + logID + "] ")
 	}
 
-	if !c.Bool("no-agent") {
+	noAgent := c.Bool("no-agent")
+	if defaultNoAgent && !c.IsSet("no-agent") {
+		noAgent = true
+	}
+	if !noAgent {
 		go func() {
 			// Bind explicitly instead of calling ListenAndServe: the port is
 			// picked by racing up the range, and ListenAndServe never reveals

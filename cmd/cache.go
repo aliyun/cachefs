@@ -604,7 +604,7 @@ func validateCacheConfig(metaConf *meta.MetaConfig, cachefsConf *vfs.Config) err
 
 func cache(c *cli.Context) error {
 	logger.Infof("Run CacheFS version %s", c.App.Version)
-	setup(c, 2)
+	setup(c, 2, false)
 	fsname := c.Args().Get(0)
 	mp := c.Args().Get(1)
 

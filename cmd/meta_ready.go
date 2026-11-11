@@ -60,7 +60,7 @@ func metaReady(ctx *cli.Context) error {
 	sockPath := ctx.String("api-server-sock")
 
 	if sockPath == "" {
-		setup(ctx, 1)
+		setup(ctx, 1, true)
 		mp := ctx.Args().First()
 		controller := openController(mp)
 		if controller == nil {
@@ -82,7 +82,7 @@ func metaReady(ctx *cli.Context) error {
 	}
 
 	// Use API server
-	setup(ctx, 0)
+	setup(ctx, 0, true)
 	start := time.Now()
 	client, err := apiclient.NewApiClient(sockPath)
 	if err != nil {
