@@ -331,7 +331,7 @@ func (p *profiler) flusher() {
 }
 
 func profile(ctx *cli.Context) error {
-	setup(ctx, 1)
+	setup(ctx, 1, true)
 	logPath := ctx.Args().First()
 	st, err := os.Stat(logPath)
 	if err != nil {

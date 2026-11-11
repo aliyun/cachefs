@@ -106,7 +106,7 @@ func source(ctx *cli.Context) error {
 
 	var controller *os.File
 	if sockPath == "" {
-		setup(ctx, 1)
+		setup(ctx, 1, true)
 		mp := ctx.Args().First()
 		controller = openController(mp)
 		if controller == nil {
@@ -114,7 +114,7 @@ func source(ctx *cli.Context) error {
 		}
 		defer controller.Close()
 	} else {
-		setup(ctx, 0)
+		setup(ctx, 0, true)
 	}
 
 	var count, bytes int64

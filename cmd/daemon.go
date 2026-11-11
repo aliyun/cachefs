@@ -166,7 +166,7 @@ func peersHandler(ss serf.SerfService, raw bool) http.HandlerFunc {
 func daemon(c *cli.Context) error {
 	logger.Infof("Run CacheFS daemon version %s", c.App.Version)
 	done := make(chan struct{})
-	setup(c, 0)
+	setup(c, 0, false)
 
 	registerer, registry := metric.InitRegister("cachefsd_", "", "")
 

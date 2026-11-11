@@ -224,7 +224,7 @@ func getPaths(ctx *cli.Context) ([]string, error) {
 }
 
 func preload(ctx *cli.Context) error {
-	setup(ctx, 0)
+	setup(ctx, 0, true)
 	broadcast := ctx.Bool("broadcast")
 	cancel := ctx.Bool("cancel")
 	sockPath := ctx.String("api-server-sock")

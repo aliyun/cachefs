@@ -121,7 +121,7 @@ func sendClear(cf *os.File, relativePaths []string, broadcast bool, clearBurst b
 }
 
 func clear(ctx *cli.Context) error {
-	setup(ctx, 0)
+	setup(ctx, 0, true)
 	clearBurst := ctx.Bool("clear-burst")
 	broadcast := ctx.Bool("broadcast")
 
