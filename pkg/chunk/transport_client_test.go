@@ -62,7 +62,7 @@ func (m *MockLoadClient) RecvMsg(interface{}) error    { return nil }
 func TestTransportClientLoadUsesFallbackServiceID(t *testing.T) {
 	grpcClient, stream := new(MockCacheClient), new(MockLoadClient)
 	primary, fallback := &mockTransferService{}, &mockTransferService{}
-	trans := &transport{config: &remoteCacheConfig{blockSize: 4}, service: primary, fallbackService: fallback}
+	trans := &transport{config: &remoteCacheConfig{blockSize: 4}, service: primary, fallbackService: fallback, rdmaDisabled: true}
 	client := &transportClient{transport: trans, grpcClient: grpcClient}
 	grpcClient.On("Load", mock.Anything).Return(stream, nil).Once()
 	stream.On("Send", mock.MatchedBy(func(req *pb.LoadRequest) bool {
@@ -72,7 +72,7 @@ func TestTransportClientLoadUsesFallbackServiceID(t *testing.T) {
 	stream.On("Send", &pb.LoadRequest{}).Return(nil).Once()
 	page := NewPage(make([]byte, 4))
 	defer page.Release()
-	require.NoError(t, client.load(context.Background(), "target", 0, page, "", false, true))
+	require.NoError(t, client.load(context.Background(), "target", 0, page, "", false))
 	assert.Empty(t, primary.downloads)
 	assert.Equal(t, []transferDownload{{addr: "tcp:7713", svcID: 8, reqID: 9}}, fallback.downloads)
 }
@@ -93,7 +93,7 @@ func TestTransportClientLoadCacherootDoesNotRequestFallback(t *testing.T) {
 	stream.On("Send", &pb.LoadRequest{}).Return(nil).Once()
 	page := NewPage(make([]byte, 4))
 	defer page.Release()
-	require.NoError(t, client.load(context.Background(), "target", 0, page, "", true, trans.useFallback("unknown", true)))
+	require.NoError(t, client.load(context.Background(), "target", 0, page, "", true))
 	assert.Equal(t, []transferDownload{{addr: "rdma:7712", svcID: 3, reqID: 9}}, cacheroot.downloads)
 }
 
@@ -110,7 +110,7 @@ func TestTransportClientLoadInitialFallbackRoutesSingleService(t *testing.T) {
 	stream.On("Send", &pb.LoadRequest{}).Return(nil).Once()
 	page := NewPage(make([]byte, 4))
 	defer page.Release()
-	require.NoError(t, client.load(context.Background(), "target", 0, page, "", false, trans.useFallback("peer", false)))
+	require.NoError(t, client.load(context.Background(), "target", 0, page, "", false))
 	assert.Equal(t, []transferDownload{{addr: "tcp:7713", svcID: 8, reqID: 9}}, tcp.downloads)
 }
 
@@ -121,7 +121,7 @@ func TestTransportClientRdmaGroupWithoutLocalFallback(t *testing.T) {
 	client := &transportClient{transport: trans, grpcClient: grpcClient}
 	page := NewPage(make([]byte, 4))
 	defer page.Release()
-	err := client.load(context.Background(), "target", 0, page, "", false, true)
+	err := client.load(context.Background(), "target", 0, page, "", false)
 	assert.EqualError(t, err, "fallback to TCP not available: no local TCP service")
 	grpcClient.AssertNotCalled(t, "Load", mock.Anything)
 	assert.Empty(t, primary.downloads)
@@ -142,7 +142,7 @@ func TestRdmaGroupCandidatesMissThenTCP(t *testing.T) {
 	var attempted []string
 	for _, addr := range []string{"B", "C"} {
 		grpcClient, stream := new(MockCacheClient), new(MockLoadClient)
-		trans.clients[addr] = &transportClient{transport: trans, grpcClient: grpcClient}
+		trans.clients[addr] = &transportClient{transport: trans, peerAddr: addr, grpcClient: grpcClient}
 		grpcClient.On("Load", mock.Anything).Return(stream, nil)
 		stream.On("Send", mock.MatchedBy(func(req *pb.LoadRequest) bool {
 			return req.GetTarget() == "target" && req.GetSupportsFallback() && req.GetUseFallback() == (addr == "C")

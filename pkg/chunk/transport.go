@@ -311,7 +311,7 @@ func (t *transport) load(ctx context.Context, addr, target string, blk, blklen u
 	defer cancel()
 
 	start := time.Now()
-	err = client.load(nctx, target, blk, page, group, cacheroot, t.useFallback(addr, cacheroot))
+	err = client.load(nctx, target, blk, page, group, cacheroot)
 	if err != nil {
 		code := status.Code(err)
 		if code == codes.FailedPrecondition {
