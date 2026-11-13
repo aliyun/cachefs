@@ -28,21 +28,19 @@ import (
 )
 
 type transportClient struct {
-	config     *remoteCacheConfig
-	service    transfer.TransferClient
+	transport  *transport
 	grpcClient pb.CachefsCacheClient
 	conn       *grpc.ClientConn
 	atime      time.Time
 }
 
-func newTransportClient(addr string, cfg *remoteCacheConfig, service transfer.TransferClient, opts ...grpc.DialOption) (*transportClient, error) {
+func newTransportClient(addr string, transport *transport, opts ...grpc.DialOption) (*transportClient, error) {
 	conn, err := rpcsvc.Dial(addr, opts...)
 	if err != nil {
 		return nil, err
 	}
 	client := &transportClient{
-		config:     cfg,
-		service:    service,
+		transport:  transport,
 		grpcClient: pb.NewCachefsCacheClient(conn),
 		conn:       conn,
 		atime:      time.Now(),
@@ -62,61 +60,81 @@ func (c *transportClient) stop() error {
 	return c.conn.Close()
 }
 
-func (c *transportClient) load(ctx context.Context, target string, blk uint32, page *Page, group string) error {
+func (c *transportClient) load(ctx context.Context, target string, blk uint32, page *Page, group string, cacheroot, useFallback bool) error {
+	config := c.transport.config
+	primary, fallback, err := c.transport.servicesFor(cacheroot)
+	if err != nil {
+		return err
+	}
 	stream, err := c.grpcClient.Load(ctx)
 	if err != nil {
 		return err
 	}
 
-	// Send request to peer
 	req := &pb.LoadRequest{
-		Target:         target,
-		BlockSize:      c.config.blockSize,
-		BlockNum:       blk,
-		Len:            uint32(len(page.Data)),
-		SerfGroup:      c.config.serfGroup,
-		CacheRootGroup: group,
+		Target:           target,
+		BlockSize:        config.blockSize,
+		BlockNum:         blk,
+		Len:              uint32(len(page.Data)),
+		SerfGroup:        config.serfGroup,
+		CacheRootGroup:   group,
+		SupportsFallback: fallback != nil,
+		UseFallback:      useFallback && fallback != nil,
 	}
-	err = stream.Send(req)
-	if err != nil {
+	if err = stream.Send(req); err != nil {
 		return err
 	}
 
-	// Get real download address and optional data checksum digest
 	res, err := stream.Recv()
 	if err != nil {
 		return err
 	}
 
-	// Parse and save hasher & digest of this block if there's any
-	if c.config.checksumEnabled() {
+	if config.checksumEnabled() {
 		hash := res.GetHash()
-		hasher, hashVal, err := parseDigest(hash, c.config.hasher)
+		hasher, hashVal, err := parseDigest(hash, config.hasher)
 		if err != nil {
 			return fmt.Errorf("parse digest failed: %s", err)
 		}
 		page.Digest = hashVal
-		page.Hasher = c.config.hasher
+		page.Hasher = config.hasher
 		logger.Debugf("Cachefs transport client load %s block %d with checksum %s:%s", req.Target, req.BlockNum, hasher, hashVal)
 	}
 
-	// Download data from peer via transfer service
+	service := primary
 	downAddr := res.GetAddr()
+	if useFallback {
+		if fallback == nil {
+			return fmt.Errorf("fallback to TCP not available: no local TCP service")
+		}
+		if res.GetFallbackAddr() == "" {
+			return fmt.Errorf("fallback to TCP not available: no TCP address")
+		}
+		service = fallback
+		downAddr = res.GetFallbackAddr()
+	} else if downAddr == "" {
+		if res.GetFallbackAddr() == "" {
+			return fmt.Errorf("fallback to TCP not available: no TCP address")
+		}
+		if fallback == nil {
+			return fmt.Errorf("fallback to TCP not available: no local TCP service")
+		}
+		service = fallback
+		downAddr = res.GetFallbackAddr()
+	}
+
 	reqID := transfer.RequestID(res.GetReqId())
-	svcID := res.GetSvcId()
-	err = c.service.Download(ctx, downAddr, svcID, reqID, page.Data)
-	if err != nil {
+	if err = service.Download(ctx, downAddr, res.GetSvcId(), reqID, page.Data); err != nil {
 		return err
 	}
 
-	// Download done, send empty request to notify server
 	_ = stream.Send(&pb.LoadRequest{})
 	return nil
 }
 
 func (c *transportClient) exchangeTracker(ctx context.Context, localMetaInfo []byte) ([]byte, error) {
 	req := &pb.ExchangeTrackerRequest{
-		SerfGroup: c.config.serfGroup,
+		SerfGroup: c.transport.config.serfGroup,
 		MetaInfo:  localMetaInfo,
 	}
 	res, err := c.grpcClient.ExchangeTracker(ctx, req)

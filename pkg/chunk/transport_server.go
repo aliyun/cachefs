@@ -87,6 +87,14 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 		}
 	}
 
+	if t.rdmaDisabled && !req.GetSupportsFallback() {
+		return status.Error(codes.FailedPrecondition, "rdma initialization failed and client does not support tcp fallback")
+	}
+	serverFallback := t.rdmaDisabled && req.GetSupportsFallback()
+	if serverFallback && t.fallbackService == nil {
+		return status.Error(codes.FailedPrecondition, "rdma disabled and tcp fallback not enabled")
+	}
+
 	page, err := s.doLoad(ctx, target, blknum, blklen, false, false)
 	if err != nil {
 		return status.Error(codes.NotFound, err.Error())
@@ -111,12 +119,19 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 		return status.Errorf(codes.Unknown, "data size mismatch (%d != %d)", blklen, dataLen)
 	}
 
+	clientFallback := req.GetSupportsFallback() && req.GetUseFallback()
+	useFallbackService := t.fallbackService != nil && (serverFallback || clientFallback)
+	uploadService := t.service
+	if useFallbackService {
+		uploadService = t.fallbackService
+	}
+
 	// Register and prepare page to be uploaded via transfer service. The upload
 	// outlives this handler and keeps reading page.Data, so the registration
 	// holds a page reference of its own.
 	cacheKey := CacheKey{Target: target, Blk: blknum}
 	page.Acquire()
-	id, err := t.service.Register(cacheKey.String(), page.Data, page.Release)
+	id, err := uploadService.Register(cacheKey.String(), page.Data, page.Release)
 	if err != nil {
 		page.Release()
 		logger.Warnf("Cachefs transport server Load %s block %d from %s: %s", target, blknum, clientAddr, err)
@@ -126,17 +141,30 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 
 	// The data plane removes a claimed registration before it accesses page.Data,
 	// so this only reclaims transfers that never started.
-	defer t.service.Unregister(transfer.RequestID(reqID))
+	defer uploadService.Unregister(transfer.RequestID(reqID))
 
 	// Notify client that it's ready to download data
-	downAddr, err := t.service.SelectServerAddr()
+	downAddr, err := uploadService.SelectServerAddr()
 	if err != nil {
 		return status.Errorf(codes.Internal, "%v", err)
 	}
 	res := &pb.LoadResponse{
 		Addr:  downAddr,
 		ReqId: reqID,
-		SvcId: t.service.ServerID(),
+		SvcId: uploadService.ServerID(),
+	}
+	if t.fallbackService != nil {
+		fallbackAddr := downAddr
+		if !useFallbackService {
+			fallbackAddr, err = t.fallbackService.SelectServerAddr()
+			if err != nil {
+				return status.Errorf(codes.Internal, "%v", err)
+			}
+		}
+		res.FallbackAddr = fallbackAddr
+	}
+	if serverFallback {
+		res.Addr = ""
 	}
 	if hasher != "" {
 		res.Hash = encodeDigest(page.Digest, page.Hasher)

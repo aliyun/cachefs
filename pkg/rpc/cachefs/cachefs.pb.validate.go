@@ -114,6 +114,10 @@ func (m *LoadRequest) validate(all bool) error {
 		errors = append(errors, err)
 	}
 
+	// no validation rules for SupportsFallback
+
+	// no validation rules for UseFallback
+
 	if len(errors) > 0 {
 		return LoadRequestMultiError(errors)
 	}
@@ -249,6 +253,17 @@ func (m *LoadResponse) validate(all bool) error {
 	// no validation rules for ReqId
 
 	// no validation rules for SvcId
+
+	if l := utf8.RuneCountInString(m.GetFallbackAddr()); l < 0 || l > 4096 {
+		err := LoadResponseValidationError{
+			field:  "FallbackAddr",
+			reason: "value length must be between 0 and 4096 runes, inclusive",
+		}
+		if !all {
+			return err
+		}
+		errors = append(errors, err)
+	}
 
 	if len(errors) > 0 {
 		return LoadResponseMultiError(errors)

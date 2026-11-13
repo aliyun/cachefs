@@ -29,6 +29,7 @@ import (
 	"github.com/aliyun/cachefs/pkg/transfer"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func hasRDMADevices() bool {
@@ -172,9 +173,20 @@ func TestNewTransportRdmaFallback(t *testing.T) {
 	}
 }
 
+type transferDownload struct {
+	addr  string
+	svcID uint32
+	reqID transfer.RequestID
+}
+
 // mockTransferService implements transfer.TransferService for testing.
 type mockTransferService struct {
 	startServerErr error
+	addr           string
+	serverID       uint32
+	stopCalls      int
+	downloads      []transferDownload
+	registerCalls  int
 
 	// hook of the last unclaimed registration, for control-plane tests to
 	// observe Unregister.
@@ -183,15 +195,30 @@ type mockTransferService struct {
 	unregisterReqIDs []transfer.RequestID
 }
 
-func (m *mockTransferService) StartServer() error    { return m.startServerErr }
-func (m *mockTransferService) StopServer() error     { return nil }
-func (m *mockTransferService) ServerAddrs() []string { return []string{"127.0.0.1:0"} }
-func (m *mockTransferService) SelectServerAddr() (string, error) {
-	return "127.0.0.1:0", nil
+func (m *mockTransferService) StartServer() error { return m.startServerErr }
+func (m *mockTransferService) StopServer() error {
+	m.stopCalls++
+	return nil
 }
-func (m *mockTransferService) ServerID() uint32 { return 1 }
+func (m *mockTransferService) ServerAddrs() []string {
+	addr := m.addr
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+	return []string{addr}
+}
+func (m *mockTransferService) SelectServerAddr() (string, error) {
+	return m.ServerAddrs()[0], nil
+}
+func (m *mockTransferService) ServerID() uint32 {
+	if m.serverID == 0 {
+		return 1
+	}
+	return m.serverID
+}
 func (m *mockTransferService) Register(_ string, _ []byte, onRelease func()) (transfer.RequestID, error) {
 	m.mu.Lock()
+	m.registerCalls++
 	m.onRelease = onRelease
 	m.mu.Unlock()
 	return 1, nil
@@ -206,10 +233,97 @@ func (m *mockTransferService) Unregister(reqID transfer.RequestID) {
 		onRelease()
 	}
 }
-func (m *mockTransferService) Download(_ context.Context, _ string, _ uint32, _ transfer.RequestID, _ []byte) error {
+func (m *mockTransferService) Download(_ context.Context, addr string, svcID uint32, reqID transfer.RequestID, _ []byte) error {
+	m.mu.Lock()
+	m.downloads = append(m.downloads, transferDownload{addr: addr, svcID: svcID, reqID: reqID})
+	m.mu.Unlock()
 	return nil
 }
 func (m *mockTransferService) EvictPeer(_ []string) int { return 0 }
+
+func TestNewTransportCreatesDualTCP(t *testing.T) {
+	origFactory := newTransferService
+	defer func() { newTransferService = origFactory }()
+	var configs []*transfer.TransferConfig
+	services := []*mockTransferService{{addr: "rdma:7744"}, {addr: "tcp:7746"}}
+	newTransferService = func(cfg *transfer.TransferConfig, _ prometheus.Registerer) (transfer.TransferService, error) {
+		configs = append(configs, cfg.DeepCopy())
+		return services[len(configs)-1], nil
+	}
+	rpc, err := rpcsvc.NewRpcService(&rpcsvc.RpcConfig{Addr: "127.0.0.1:0"})
+	require.NoError(t, err)
+	defer rpc.Stop()
+	xprt, err := newTransport(&remoteCacheConfig{
+		localIP: "127.0.0.1", localPort: 7743, transport: transfer.RDMATransport,
+		transportNics: []string{"rdma0", "rdma1"}, rdmaFallbackTcp: true,
+	}, &store{rpc: rpc}, nil)
+	require.NoError(t, err)
+	trans := xprt.(*transport)
+	defer trans.stop()
+	require.Len(t, configs, 2)
+	assert.Equal(t, transfer.RDMATransport, configs[0].Transport)
+	assert.Equal(t, transfer.TCPTransport, configs[1].Transport)
+	assert.Empty(t, configs[1].TransportNics)
+	assert.Equal(t, configs[0].BasePort+len(configs[0].TransportNics), configs[1].BasePort)
+	assert.NotSame(t, trans.service, trans.fallbackService)
+}
+
+func TestNewTransportInitialRDMAFallback(t *testing.T) {
+	origFactory := newTransferService
+	defer func() { newTransferService = origFactory }()
+	var configs []*transfer.TransferConfig
+	tcp := &mockTransferService{addr: "tcp:7744"}
+	newTransferService = func(cfg *transfer.TransferConfig, _ prometheus.Registerer) (transfer.TransferService, error) {
+		configs = append(configs, cfg.DeepCopy())
+		if len(configs) == 1 {
+			return nil, errors.New("rdma initialization failed")
+		}
+		return tcp, nil
+	}
+	rpc, err := rpcsvc.NewRpcService(&rpcsvc.RpcConfig{Addr: "127.0.0.1:0"})
+	require.NoError(t, err)
+	defer rpc.Stop()
+	xprt, err := newTransport(&remoteCacheConfig{
+		localIP: "127.0.0.1", localPort: 7743, transport: transfer.RDMATransport,
+		transportNics: []string{"rdma0"}, rdmaFallbackTcp: true,
+	}, &store{rpc: rpc}, nil)
+	require.NoError(t, err)
+	trans := xprt.(*transport)
+	assert.True(t, trans.rdmaDisabled)
+	assert.Same(t, trans.service, trans.fallbackService)
+	require.Len(t, configs, 2)
+	assert.Equal(t, transfer.TCPTransport, configs[1].Transport)
+	assert.Empty(t, configs[1].TransportNics)
+	require.NoError(t, trans.stop())
+	assert.Equal(t, 1, tcp.stopCalls)
+}
+
+func TestNewTransportInitialRDMAFallbackCleanup(t *testing.T) {
+	origFactory := newTransferService
+	defer func() { newTransferService = origFactory }()
+	calls := 0
+	tcp := &mockTransferService{addr: "tcp:7744"}
+	newTransferService = func(_ *transfer.TransferConfig, _ prometheus.Registerer) (transfer.TransferService, error) {
+		calls++
+		switch calls {
+		case 1:
+			return nil, errors.New("rdma initialization failed")
+		case 2:
+			return tcp, nil
+		default:
+			return nil, errors.New("cacheroot initialization failed")
+		}
+	}
+	rpc, err := rpcsvc.NewRpcService(&rpcsvc.RpcConfig{Addr: "127.0.0.1:0"})
+	require.NoError(t, err)
+	defer rpc.Stop()
+	_, err = newTransport(&remoteCacheConfig{
+		localIP: "127.0.0.1", localPort: 7743, transport: transfer.RDMATransport,
+		rdmaFallbackTcp: true, cacherootAddrs: []string{"peer:1"}, cacherootXprt: transfer.RDMATransport,
+	}, &store{rpc: rpc}, nil)
+	require.Error(t, err)
+	assert.Equal(t, 1, tcp.stopCalls)
+}
 
 func TestInitTransferService(t *testing.T) {
 	assert := assert.New(t)
@@ -237,14 +351,16 @@ func TestInitTransferService(t *testing.T) {
 
 	// Case 2: NewTransferService succeeds, StartServer fails
 	t.Run("StartServerFail", func(t *testing.T) {
+		service := &mockTransferService{startServerErr: errors.New("bind failed")}
 		newTransferService = func(_ *transfer.TransferConfig, _ prometheus.Registerer) (transfer.TransferService, error) {
-			return &mockTransferService{startServerErr: errors.New("bind failed")}, nil
+			return service, nil
 		}
 		svc, err := initTransferService(tcfg, nil, true)
 		assert.Nil(svc)
 		assert.Error(err)
 		assert.Contains(err.Error(), "Start")
 		assert.Contains(err.Error(), "bind failed")
+		assert.Equal(1, service.stopCalls)
 	})
 
 	// Case 3: NewTransferService succeeds, needStart=false skips StartServer
