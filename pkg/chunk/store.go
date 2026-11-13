@@ -250,6 +250,7 @@ type StoreConfig struct {
 	RdmaBufCount    int
 	RdmaMaxMem      uint64
 	RdmaFallbackTcp bool
+	RdmaGroup       string
 
 	// Alternative P2P cache root related
 	CacheRootPort  int      // Local cache root server port
@@ -315,16 +316,18 @@ type store struct {
 	remoteHits *metric.AtomicCounter
 	// counts all failed attempts to load data from peers or cacheroot,
 	// including both "not found" and "found but failed to load" cases.
-	remoteMiss         *metric.AtomicCounter
-	remoteHitBytes     *metric.AtomicCounter
-	remoteMissBytes    *metric.AtomicCounter
-	remoteTimeout      *metric.AtomicCounter
-	remoteBlacklist    *metric.AtomicCounter
-	seederHits         prometheus.Counter
-	seederHitBytes     prometheus.Counter
-	remoteReadHist     prometheus.Histogram
-	checksumErr        *metric.AtomicCounter
-	remoteReadInFlight int32
+	remoteMiss                   *metric.AtomicCounter
+	remoteHitBytes               *metric.AtomicCounter
+	remoteMissBytes              *metric.AtomicCounter
+	remoteFallbackRdmaGroupHits  prometheus.Counter
+	remoteFallbackRdmaGroupBytes prometheus.Counter
+	remoteTimeout                *metric.AtomicCounter
+	remoteBlacklist              *metric.AtomicCounter
+	seederHits                   prometheus.Counter
+	seederHitBytes               prometheus.Counter
+	remoteReadHist               prometheus.Histogram
+	checksumErr                  *metric.AtomicCounter
+	remoteReadInFlight           int32
 
 	// hash ring owner metrics: success/failure loading from the consistent-hash owner
 	hashOwnerHits      prometheus.Counter
@@ -363,6 +366,16 @@ func doNewStore(config *StoreConfig, rpc rpcsvc.RpcService, cacherootRpc rpcsvc.
 	// Make sure transport types are all lower case
 	config.Transport = strings.ToLower(config.Transport)
 	config.CacheRootXprt = strings.ToLower(config.CacheRootXprt)
+	config.RdmaGroup = strings.TrimSpace(config.RdmaGroup)
+	if config.RdmaGroup != "" {
+		if !transfer.IsRdmaTransport(config.Transport) {
+			logger.Warnf("RDMA group %q is ignored for %s transport", config.RdmaGroup, config.Transport)
+			config.RdmaGroup = ""
+		} else if !config.RdmaFallbackTcp {
+			logger.Infof("RDMA group %q is set without TCP fallback; enabling TCP fallback automatically", config.RdmaGroup)
+			config.RdmaFallbackTcp = true
+		}
+	}
 
 	rcacheCfg := &remoteCacheConfig{
 		blockSize:       config.BlockSize,
@@ -384,6 +397,7 @@ func doNewStore(config *StoreConfig, rpc rpcsvc.RpcService, cacherootRpc rpcsvc.
 		rdmaBufCount:    config.RdmaBufCount,
 		rdmaMaxMem:      config.RdmaMaxMem,
 		rdmaFallbackTcp: config.RdmaFallbackTcp,
+		rdmaGroup:       config.RdmaGroup,
 		cacherootPort:   config.CacheRootPort,
 		cacherootAddrs:  config.CacheRootAddrs,
 		cacherootNics:   config.CacheRootNics,
@@ -743,6 +757,14 @@ func (s *store) InitMetrics(reg prometheus.Registerer) {
 		Name: CounterRemoteMissBytes,
 		Help: "missed bytes from remote cache",
 	})
+	s.remoteFallbackRdmaGroupHits = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "remote_fallback_rdmagroup_hits",
+		Help: "blocks read through TCP fallback from peers outside the local RDMA group",
+	})
+	s.remoteFallbackRdmaGroupBytes = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "remote_fallback_rdmagroup_bytes",
+		Help: "bytes read through TCP fallback from peers outside the local RDMA group",
+	})
 	s.cacherootQuery = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "cacheroot_query",
 		Help: "count of queries to remote cache root",
@@ -829,6 +851,8 @@ func (s *store) InitMetrics(reg prometheus.Registerer) {
 	reg.MustRegister(s.remoteHitBytes)
 	reg.MustRegister(s.remoteMiss)
 	reg.MustRegister(s.remoteMissBytes)
+	reg.MustRegister(s.remoteFallbackRdmaGroupHits)
+	reg.MustRegister(s.remoteFallbackRdmaGroupBytes)
 	reg.MustRegister(s.cacherootQuery)
 	reg.MustRegister(s.cacherootQueryHits)
 	reg.MustRegister(s.cacherootQueryMiss)

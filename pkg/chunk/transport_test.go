@@ -255,7 +255,7 @@ func TestNewTransportCreatesDualTCP(t *testing.T) {
 	defer rpc.Stop()
 	xprt, err := newTransport(&remoteCacheConfig{
 		localIP: "127.0.0.1", localPort: 7743, transport: transfer.RDMATransport,
-		transportNics: []string{"rdma0", "rdma1"}, rdmaFallbackTcp: true,
+		transportNics: []string{"rdma0", "rdma1"}, rdmaFallbackTcp: true, rdmaGroup: "region-a",
 	}, &store{rpc: rpc}, nil)
 	require.NoError(t, err)
 	trans := xprt.(*transport)
@@ -323,6 +323,32 @@ func TestNewTransportInitialRDMAFallbackCleanup(t *testing.T) {
 	}, &store{rpc: rpc}, nil)
 	require.Error(t, err)
 	assert.Equal(t, 1, tcp.stopCalls)
+}
+
+func TestUpdateRdmaPeer(t *testing.T) {
+	trans := &transport{config: &remoteCacheConfig{}}
+	trans.updateRdmaPeer("peer", "region-a")
+	assert.True(t, trans.isRdmaPeer("unknown"))
+
+	trans.config.rdmaGroup = "region-a"
+	assert.False(t, trans.isRdmaPeer("peer"))
+	trans.updateRdmaPeer("peer", "region-a")
+	assert.True(t, trans.isRdmaPeer("peer"))
+	trans.updateRdmaPeer("peer", "region-b")
+	assert.False(t, trans.isRdmaPeer("peer"))
+	trans.updateRdmaPeer("peer", "region-a")
+	trans.updateRdmaPeer("peer", "")
+	assert.False(t, trans.isRdmaPeer("peer"))
+	trans.updateRdmaPeer("peer", "Region-A")
+	assert.False(t, trans.isRdmaPeer("peer"))
+	assert.True(t, trans.useFallback("peer", false))
+	trans.updateRdmaPeer("peer", "region-a")
+	assert.False(t, trans.useFallback("peer", false))
+	trans.updateRdmaPeer("peer", "region-b")
+	assert.True(t, trans.useFallback("peer", false))
+	assert.False(t, trans.useFallback("peer", true))
+	trans.rdmaDisabled = true
+	assert.True(t, trans.useFallback("unknown", false))
 }
 
 func TestInitTransferService(t *testing.T) {

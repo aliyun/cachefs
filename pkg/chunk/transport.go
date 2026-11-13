@@ -46,6 +46,10 @@ type transportInterface interface {
 	// Load block from remote
 	load(ctx context.Context, addr, target string, blk, blklen uint32, page *Page, group string, cacheroot bool) error
 
+	// RDMA peer group membership used by candidate ordering.
+	updateRdmaPeer(addr, group string)
+	isRdmaPeer(addr string) bool
+
 	// ExchangeTracker exchanges metaMap with a remote peer: sends local metaMap
 	// and receives remote metaMap, merging the result locally.
 	exchangeTracker(ctx context.Context, addr string) error
@@ -63,6 +67,9 @@ type transport struct {
 	rdmaDisabled    bool
 
 	cacherootService transfer.TransferClient
+
+	rdmaMu    sync.RWMutex
+	rdmaPeers map[string]struct{}
 
 	clientMu sync.Mutex
 	clients  map[string]*transportClient
@@ -220,11 +227,40 @@ func (t *transport) servicesFor(cacheroot bool) (transfer.TransferClient, transf
 	return t.service, t.fallbackService, nil
 }
 
-func (t *transport) useFallback(cacheroot bool) bool {
+// updateRdmaPeer does nothing when the local RDMA group is empty. Otherwise,
+// addr is added when group matches, or removed when it is different or empty.
+func (t *transport) updateRdmaPeer(addr, group string) {
+	if t.config.rdmaGroup == "" {
+		return
+	}
+	t.rdmaMu.Lock()
+	defer t.rdmaMu.Unlock()
+	if group == t.config.rdmaGroup {
+		if t.rdmaPeers == nil {
+			t.rdmaPeers = make(map[string]struct{})
+		}
+		t.rdmaPeers[addr] = struct{}{}
+	} else {
+		delete(t.rdmaPeers, addr)
+	}
+}
+
+// isRdmaPeer returns true for every peer when group routing is disabled.
+func (t *transport) isRdmaPeer(addr string) bool {
+	if t.config.rdmaGroup == "" {
+		return true
+	}
+	t.rdmaMu.RLock()
+	defer t.rdmaMu.RUnlock()
+	_, ok := t.rdmaPeers[addr]
+	return ok
+}
+
+func (t *transport) useFallback(addr string, cacheroot bool) bool {
 	if cacheroot {
 		return false
 	}
-	return t.rdmaDisabled
+	return t.rdmaDisabled || !t.isRdmaPeer(addr)
 }
 
 func (t *transport) gcClient() {
@@ -275,7 +311,7 @@ func (t *transport) load(ctx context.Context, addr, target string, blk, blklen u
 	defer cancel()
 
 	start := time.Now()
-	err = client.load(nctx, target, blk, page, group, cacheroot, t.useFallback(cacheroot))
+	err = client.load(nctx, target, blk, page, group, cacheroot, t.useFallback(addr, cacheroot))
 	if err != nil {
 		code := status.Code(err)
 		if code == codes.FailedPrecondition {

@@ -40,6 +40,7 @@ type SerfConfig struct {
 	MaxRetry   uint32
 	Role       string
 	Group      string
+	RdmaGroup  string
 	NodeName   string
 	HashRing   bool
 	NodeCount  int
@@ -85,6 +86,9 @@ func setupSerfConfig(cfg *SerfConfig, coalescer serf.Coalescer, filterer serf.Ev
 	}
 	if cfg.Group != "" {
 		tags[keySerfGroup] = cfg.Group
+	}
+	if cfg.RdmaGroup != "" {
+		tags[keyRdmaGroup] = cfg.RdmaGroup
 	}
 	logger.Infof("Initialize serf with tags: %v", tags)
 

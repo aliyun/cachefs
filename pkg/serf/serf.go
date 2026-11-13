@@ -69,6 +69,7 @@ const (
 	// key of serf member tags
 	keySerfRole  string = "role"
 	keySerfGroup string = "group"
+	keyRdmaGroup string = "rdmaGroup"
 	keyCachePort string = "cachePort"
 
 	// time interval to update consistent hash ring
@@ -113,9 +114,10 @@ type SerfService interface {
 }
 
 type SerfMember struct {
-	Name string
-	Addr string
-	Role string
+	Name      string
+	Addr      string
+	Role      string
+	RdmaGroup string
 }
 
 type SerfUser struct {
@@ -810,7 +812,9 @@ func (s *serfService) handleSerfMemberJoinEvent(e serf.Event) {
 		}
 		s.addMember(member.Name, memAddr)
 		role := getMemberRole(&member)
-		members = append(members, SerfMember{Name: member.Name, Addr: memAddr, Role: role})
+		members = append(members, SerfMember{
+			Name: member.Name, Addr: memAddr, Role: role, RdmaGroup: member.Tags[keyRdmaGroup],
+		})
 	}
 	if len(members) > 0 {
 		logger.Infof("Handled %d new member(s) join event in %s, %d members in cluster",

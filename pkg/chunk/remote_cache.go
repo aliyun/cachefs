@@ -113,6 +113,7 @@ type remoteCacheConfig struct {
 	rdmaBufCount    int
 	rdmaMaxMem      uint64
 	rdmaFallbackTcp bool
+	rdmaGroup       string
 	cacherootPort   int
 	cacherootAddrs  []string
 	cacherootNics   []string
@@ -524,6 +525,55 @@ func (r *peerCache) findCandidates(target string, nrblk uint32, n int, skipLocal
 	return candidates
 }
 
+// findRdmaCandidates returns same-group peers before out-of-group peers.
+// n <= 0 means all.
+func (r *peerCache) findRdmaCandidates(target string, nrblk uint32, n int) []string {
+	r.metaMu.RLock()
+	hostMap := r.metaMap[target][nrblk]
+	if len(hostMap) == 0 {
+		r.metaMu.RUnlock()
+		return []string{}
+	}
+	capacity := n
+	if n <= 0 {
+		capacity = len(hostMap)
+	}
+	same := make([]string, 0, capacity)
+	other := make([]string, 0, capacity)
+	for addr := range hostMap {
+		if addr == r.config.localAddr {
+			continue
+		}
+		if r.transport.isRdmaPeer(addr) {
+			same = append(same, addr)
+			if n > 0 && len(same) == n {
+				break
+			}
+		} else if n <= 0 || len(other) < n {
+			other = append(other, addr)
+		}
+	}
+	r.metaMu.RUnlock()
+
+	for _, candidates := range [][]string{same, other} {
+		rand.Shuffle(len(candidates), func(i, j int) {
+			candidates[i], candidates[j] = candidates[j], candidates[i]
+		})
+	}
+	candidates := append(same, other...)
+	if n > 0 && len(candidates) > n {
+		candidates = candidates[:n]
+	}
+	return candidates
+}
+
+func (r *peerCache) loadCandidates(target string, nrblk uint32) []string {
+	if r.config.rdmaGroup == "" {
+		return r.findCandidates(target, nrblk, nrPeerCandidate, true)
+	}
+	return r.findRdmaCandidates(target, nrblk, nrPeerCandidate)
+}
+
 // Copy the metaMap into a node-aware view keyed by restored target (internal key prefix stripped),
 // then by node address, each value a bitset of the blocks that node holds. When prefixes is
 // non-empty, only targets whose internal key matches one of the gen'd prefixes are included, so the
@@ -590,6 +640,10 @@ func (r *peerCache) loadFromPeer(ctx context.Context, target string, nrblk uint3
 		}
 		err := r.transport.load(ctx, addr, target, nrblk, blklen, page, group, cacheroot)
 		if err == nil {
+			if !cacheroot && !r.transport.isRdmaPeer(addr) {
+				r.store.remoteFallbackRdmaGroupHits.Inc()
+				r.store.remoteFallbackRdmaGroupBytes.Add(float64(blklen))
+			}
 			return page, nil
 		}
 
@@ -610,7 +664,7 @@ func (r *peerCache) loadFromPeer(ctx context.Context, target string, nrblk uint3
 
 func (r *peerCache) load(ctx context.Context, target string, nrblk uint32, blklen uint32) (*Page, error) {
 	group := r.config.serfGroup
-	candidates := r.findCandidates(target, nrblk, nrPeerCandidate, true)
+	candidates := r.loadCandidates(target, nrblk)
 
 	start := time.Now()
 	if len(candidates) > 0 {

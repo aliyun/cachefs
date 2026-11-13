@@ -19,13 +19,18 @@ package chunk
 import (
 	"context"
 	"testing"
+	"time"
 
 	pb "github.com/aliyun/cachefs/pkg/rpc/cachefs"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type MockCacheClient struct{ mock.Mock }
@@ -76,7 +81,7 @@ func TestTransportClientLoadCacherootDoesNotRequestFallback(t *testing.T) {
 	grpcClient, stream := new(MockCacheClient), new(MockLoadClient)
 	cacheroot := &mockTransferService{}
 	trans := &transport{
-		config:  &remoteCacheConfig{blockSize: 4, transport: "rdma"},
+		config:  &remoteCacheConfig{blockSize: 4, transport: "rdma", rdmaGroup: "region-a"},
 		service: &mockTransferService{}, fallbackService: &mockTransferService{}, cacherootService: cacheroot,
 	}
 	client := &transportClient{transport: trans, grpcClient: grpcClient}
@@ -88,7 +93,7 @@ func TestTransportClientLoadCacherootDoesNotRequestFallback(t *testing.T) {
 	stream.On("Send", &pb.LoadRequest{}).Return(nil).Once()
 	page := NewPage(make([]byte, 4))
 	defer page.Release()
-	require.NoError(t, client.load(context.Background(), "target", 0, page, "", true, trans.useFallback(true)))
+	require.NoError(t, client.load(context.Background(), "target", 0, page, "", true, trans.useFallback("unknown", true)))
 	assert.Equal(t, []transferDownload{{addr: "rdma:7712", svcID: 3, reqID: 9}}, cacheroot.downloads)
 }
 
@@ -105,6 +110,65 @@ func TestTransportClientLoadInitialFallbackRoutesSingleService(t *testing.T) {
 	stream.On("Send", &pb.LoadRequest{}).Return(nil).Once()
 	page := NewPage(make([]byte, 4))
 	defer page.Release()
-	require.NoError(t, client.load(context.Background(), "target", 0, page, "", false, trans.useFallback(false)))
+	require.NoError(t, client.load(context.Background(), "target", 0, page, "", false, trans.useFallback("peer", false)))
 	assert.Equal(t, []transferDownload{{addr: "tcp:7713", svcID: 8, reqID: 9}}, tcp.downloads)
+}
+
+func TestTransportClientRdmaGroupWithoutLocalFallback(t *testing.T) {
+	grpcClient := new(MockCacheClient)
+	primary := &mockTransferService{}
+	trans := &transport{config: &remoteCacheConfig{blockSize: 4, transport: "rdma", rdmaGroup: "region-a"}, service: primary}
+	client := &transportClient{transport: trans, grpcClient: grpcClient}
+	page := NewPage(make([]byte, 4))
+	defer page.Release()
+	err := client.load(context.Background(), "target", 0, page, "", false, true)
+	assert.EqualError(t, err, "fallback to TCP not available: no local TCP service")
+	grpcClient.AssertNotCalled(t, "Load", mock.Anything)
+	assert.Empty(t, primary.downloads)
+}
+
+func TestRdmaGroupCandidatesMissThenTCP(t *testing.T) {
+	cfg := &remoteCacheConfig{localAddr: "A", blockSize: 4, transport: "rdma", rdmaGroup: "region-a", rdmaFallbackTcp: true, peerTimeout: time.Second}
+	primary, fallback := &mockTransferService{}, &mockTransferService{}
+	s := &store{
+		serf:                         &MockSerfService{},
+		remoteFallbackRdmaGroupHits:  prometheus.NewCounter(prometheus.CounterOpts{Name: "cross_group_hits"}),
+		remoteFallbackRdmaGroupBytes: prometheus.NewCounter(prometheus.CounterOpts{Name: "cross_group_bytes"}),
+	}
+	trans := &transport{config: cfg, store: s, service: primary, fallbackService: fallback, clients: make(map[string]*transportClient), rdmaPeers: map[string]struct{}{"B": {}}}
+	peer := &peerCache{config: cfg, serf: s.serf, transport: trans, store: s,
+		metaMap: map[string]map[uint32]map[string]struct{}{"target": {0: {"B": {}, "C": {}}}},
+	}
+	var attempted []string
+	for _, addr := range []string{"B", "C"} {
+		grpcClient, stream := new(MockCacheClient), new(MockLoadClient)
+		trans.clients[addr] = &transportClient{transport: trans, grpcClient: grpcClient}
+		grpcClient.On("Load", mock.Anything).Return(stream, nil)
+		stream.On("Send", mock.MatchedBy(func(req *pb.LoadRequest) bool {
+			return req.GetTarget() == "target" && req.GetSupportsFallback() && req.GetUseFallback() == (addr == "C")
+		})).Run(func(mock.Arguments) { attempted = append(attempted, addr) }).Return(nil)
+		if addr == "B" {
+			stream.On("Recv").Return((*pb.LoadResponse)(nil), status.Error(codes.NotFound, "miss")).Once()
+			stream.On("Recv").Return(&pb.LoadResponse{Addr: "B-rdma", SvcId: 7, ReqId: 12}, nil).Once()
+		} else {
+			stream.On("Recv").Return(&pb.LoadResponse{Addr: "C-tcp", FallbackAddr: "C-tcp", SvcId: 8, ReqId: 13}, nil).Once()
+		}
+		stream.On("Send", &pb.LoadRequest{}).Return(nil).Once()
+		t.Cleanup(func() { grpcClient.AssertExpectations(t); stream.AssertExpectations(t) })
+	}
+	assert.Equal(t, []string{"B", "C"}, peer.loadCandidates("target", 0))
+	page, err := peer.load(context.Background(), "target", 0, 4)
+	require.NoError(t, err)
+	page.Release()
+	assert.Equal(t, []string{"B", "C"}, attempted)
+	assert.Empty(t, primary.downloads)
+	assert.Equal(t, []transferDownload{{addr: "C-tcp", svcID: 8, reqID: 13}}, fallback.downloads)
+	assert.EqualValues(t, 1, testutil.ToFloat64(s.remoteFallbackRdmaGroupHits))
+	assert.EqualValues(t, 4, testutil.ToFloat64(s.remoteFallbackRdmaGroupBytes))
+	assert.False(t, trans.rdmaDisabled)
+	page = NewPage(make([]byte, 4))
+	defer page.Release()
+	require.NoError(t, trans.load(context.Background(), "B", "target", 0, 4, page, "", false))
+	assert.Equal(t, []transferDownload{{addr: "B-rdma", svcID: 7, reqID: 12}}, primary.downloads)
+	assert.Len(t, fallback.downloads, 1)
 }

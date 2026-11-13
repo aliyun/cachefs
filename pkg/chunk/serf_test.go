@@ -252,6 +252,7 @@ func TestHandleSerfMemberJoinEvent(t *testing.T) {
 		serfUser: &ss.SerfUser{
 			MemberJoinCh: make(chan []ss.SerfMember, 10),
 		},
+		transport:      &mockExchangeTransport{},
 		seeders:        make(map[string]struct{}),
 		exchangeCh:     make(chan string, exchangeTrackerChSize),
 		exchangeDoneCh: make(chan struct{}),
@@ -386,6 +387,7 @@ func TestHandleSerfMemberJoinEventExchange(t *testing.T) {
 				serfUser: &ss.SerfUser{
 					MemberJoinCh: make(chan []ss.SerfMember, 10),
 				},
+				transport:      &mockExchangeTransport{},
 				seeders:        make(map[string]struct{}),
 				exchangeCh:     make(chan string, tt.exchangeChCap),
 				exchangeDoneCh: exchangeDoneCh,
@@ -434,6 +436,9 @@ type mockExchangeTransport struct {
 func (m *mockExchangeTransport) load(ctx context.Context, addr, target string, blk, blklen uint32, page *Page, group string, cacheroot bool) error {
 	return nil
 }
+
+func (m *mockExchangeTransport) updateRdmaPeer(string, string) {}
+func (m *mockExchangeTransport) isRdmaPeer(string) bool        { return true }
 
 func (m *mockExchangeTransport) exchangeTracker(ctx context.Context, addr string) error {
 	m.mu.Lock()
@@ -780,6 +785,7 @@ func TestHandleSerfMemberLeaveEvent(t *testing.T) {
 		serfUser: &ss.SerfUser{
 			MemberLeaveCh: make(chan []ss.SerfMember, 10),
 		},
+		transport: &mockExchangeTransport{},
 		metaMap:   make(map[string]map[uint32]map[string]struct{}),
 		peerMap:   make(map[string]map[string]*bitset.BitSet),
 		targetMap: make(map[string]*targetInfo),
@@ -856,6 +862,46 @@ func TestHandleSerfMemberLeaveEvent(t *testing.T) {
 
 	close(cache.stopCh)
 	time.Sleep(10 * time.Millisecond)
+}
+
+func TestHandleSerfMemberRdmaGroup(t *testing.T) {
+	for _, group := range []string{"", "region-a"} {
+		cache := &peerCache{
+			config: &remoteCacheConfig{localAddr: "127.0.0.1:1234", rdmaGroup: group},
+			serfUser: &ss.SerfUser{
+				MemberJoinCh: make(chan []ss.SerfMember, 10), MemberLeaveCh: make(chan []ss.SerfMember, 10),
+			},
+			transport: &transport{config: &remoteCacheConfig{rdmaGroup: group}},
+			metaMap:   make(map[string]map[uint32]map[string]struct{}), peerMap: make(map[string]map[string]*bitset.BitSet),
+			targetMap: make(map[string]*targetInfo), seeders: make(map[string]struct{}),
+			exchangeCh: make(chan string, exchangeTrackerChSize), exchangeDoneCh: make(chan struct{}), stopCh: make(chan struct{}),
+		}
+		go cache.handleSerfMemberJoinEvent()
+		go cache.handleSerfMemberLeaveEvent()
+		cache.serfUser.MemberJoinCh <- []ss.SerfMember{
+			{Name: "same", Addr: "10.0.0.1:9000", RdmaGroup: "region-a"},
+			{Name: "other", Addr: "10.0.0.2:9000", RdmaGroup: "region-b"},
+			{Name: "untagged", Addr: "10.0.0.3:9000"},
+			{Name: "local", Addr: "127.0.0.1:1234", RdmaGroup: "region-a"},
+		}
+		for i := 0; i < 3; i++ {
+			addr := <-cache.exchangeCh
+			assert.Equal(t, group == "" || addr == "10.0.0.1:9000", cache.transport.isRdmaPeer(addr), addr)
+		}
+		cache.serfUser.MemberJoinCh <- []ss.SerfMember{{Name: "same", Addr: "10.0.0.1:9000"}}
+		<-cache.exchangeCh
+		assert.Equal(t, group == "", cache.transport.isRdmaPeer("10.0.0.1:9000"))
+		cache.serfUser.MemberJoinCh <- []ss.SerfMember{{Name: "same", Addr: "10.0.0.1:9000", RdmaGroup: "region-a"}}
+		<-cache.exchangeCh
+		assert.True(t, cache.transport.isRdmaPeer("10.0.0.1:9000"))
+		cache.serfUser.MemberLeaveCh <- []ss.SerfMember{{Name: "same", Addr: "10.0.0.1:9000"}}
+		if group == "" {
+			assert.True(t, cache.transport.isRdmaPeer("10.0.0.1:9000"))
+		} else {
+			assert.Eventually(t, func() bool { return !cache.transport.isRdmaPeer("10.0.0.1:9000") }, time.Second, time.Millisecond)
+		}
+		close(cache.stopCh)
+	}
 }
 
 func TestCleanupMember(t *testing.T) {

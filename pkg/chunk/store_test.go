@@ -29,6 +29,7 @@ import (
 	"github.com/aliyun/cachefs/pkg/metric"
 	"github.com/aliyun/cachefs/pkg/rpcsvc"
 	"github.com/aliyun/cachefs/pkg/serf"
+	"github.com/aliyun/cachefs/pkg/transfer"
 	"github.com/aliyun/cachefs/pkg/utils"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -1163,6 +1164,49 @@ func TestStoreConfig_RdmaEnabled(t *testing.T) {
 			}
 			result := conf.RdmaEnabled()
 			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestStore_RdmaGroup(t *testing.T) {
+	origFactory := newTransferService
+	defer func() { newTransferService = origFactory }()
+	newTransferService = func(*transfer.TransferConfig, prometheus.Registerer) (transfer.TransferService, error) {
+		return &mockTransferService{}, nil
+	}
+	for _, tc := range []struct {
+		name                     string
+		transport, cacheRootXprt string
+		group, wantGroup         string
+		fallback, wantFallback   bool
+	}{
+		{name: "enable fallback", transport: "rdma", group: "g1", wantGroup: "g1", wantFallback: true},
+		{name: "normalize transport and group", transport: "RDMA", group: " g1 ", wantGroup: "g1", wantFallback: true},
+		{name: "explicit fallback", transport: "rdma", group: "g1", wantGroup: "g1", fallback: true, wantFallback: true},
+		{name: "empty group", transport: "rdma"},
+		{name: "ignore TCP group", transport: "tcp", group: "g1"},
+		{name: "cacheroot RDMA does not enable grouping", transport: "tcp", cacheRootXprt: "rdma", group: "g1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conf, err := NewStoreConfig()
+			if !assert.NoError(t, err) {
+				return
+			}
+			conf.CacheDir = "memory"
+			conf.Transport = tc.transport
+			conf.CacheRootXprt = tc.cacheRootXprt
+			conf.RdmaGroup = tc.group
+			conf.RdmaFallbackTcp = tc.fallback
+			rpc, err := rpcsvc.NewRpcService(&rpcsvc.RpcConfig{Addr: "127.0.0.1:0"})
+			if !assert.NoError(t, err) {
+				return
+			}
+			defer rpc.Stop()
+			store := doNewStore(conf, rpc, nil, serf.NewSerfService(serf.DefaultSerfConfig(), nil), nil)
+			defer store.Stop()
+			assert.Equal(t, tc.wantGroup, conf.RdmaGroup)
+			assert.Equal(t, tc.wantFallback, conf.RdmaFallbackTcp)
+			assert.Equal(t, tc.wantGroup, store.rcache.(*peerCache).config.rdmaGroup)
 		})
 	}
 }

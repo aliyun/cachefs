@@ -295,7 +295,11 @@ func commonFlags() []cli.Flag {
 		},
 		&cli.BoolFlag{
 			Name:  "rdma-fallback-tcp",
-			Usage: "enables fallback to 'tcp' if RDMA initialization fails",
+			Usage: "enables fallback to 'tcp' if RDMA initialization fails or peers are outside the RDMA group",
+		},
+		&cli.StringFlag{
+			Name:  "rdma-group",
+			Usage: "RDMA reachability group for primary P2P: prefer same-group peers and use TCP outside the group; enables --rdma-fallback-tcp on RDMA transport; does not apply to cacheroot",
 		},
 		&cli.IntFlag{
 			Name:  "cacheroot-port",

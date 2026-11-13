@@ -115,6 +115,7 @@ func TestTransportLoadAdvertisesFallback(t *testing.T) {
 		useFallback      bool
 		hasFallback      bool
 		primaryAddr      string
+		transport        string
 		wantAddr         string
 		wantSvcID        uint32
 		wantFallback     bool
@@ -123,8 +124,10 @@ func TestTransportLoadAdvertisesFallback(t *testing.T) {
 	}{
 		{name: "normal RDMA", supportsFallback: true, hasFallback: true, wantAddr: "rdma:7712", wantSvcID: 7, wantFallbackAddr: "tcp:7713"},
 		{name: "client fallback", supportsFallback: true, useFallback: true, hasFallback: true, wantAddr: "tcp:7713", wantSvcID: 8, wantFallback: true, wantFallbackAddr: "tcp:7713"},
+		{name: "client requires unavailable TCP", supportsFallback: true, useFallback: true, wantErrMessage: "client requires tcp fallback but tcp fallback not enabled"},
 		{name: "legacy client ignores use fallback", useFallback: true, wantAddr: "rdma:7712", wantSvcID: 7},
-		{name: "legacy TCP client", primaryAddr: "tcp:7712", wantAddr: "tcp:7712", wantSvcID: 7},
+		{name: "legacy TCP client", primaryAddr: "tcp:7712", transport: transfer.TCPTransport, wantAddr: "tcp:7712", wantSvcID: 7},
+		{name: "TCP primary satisfies client fallback", primaryAddr: "tcp:7712", transport: transfer.TCPTransport, supportsFallback: true, useFallback: true, wantAddr: "tcp:7712", wantSvcID: 7, wantFallbackAddr: "tcp:7712"},
 		{name: "legacy client after initialization fallback", rdmaDisabled: true, hasFallback: true, wantErrMessage: "rdma initialization failed and client does not support tcp fallback"},
 		{name: "capable client after initialization fallback", rdmaDisabled: true, supportsFallback: true, hasFallback: true, wantSvcID: 8, wantFallback: true, wantFallbackAddr: "tcp:7713"},
 	}
@@ -141,8 +144,12 @@ func TestTransportLoadAdvertisesFallback(t *testing.T) {
 			}
 			primary := &mockTransferService{addr: primaryAddr, serverID: 7}
 			fallback := &mockTransferService{addr: "tcp:7713", serverID: 8}
+			transportType := tt.transport
+			if transportType == "" {
+				transportType = transfer.RDMATransport
+			}
 			trans := &transport{
-				config: &remoteCacheConfig{blockSize: 4, serfGroup: "group"},
+				config: &remoteCacheConfig{blockSize: 4, serfGroup: "group", transport: transportType},
 				store:  &store{config: &StoreConfig{}, bcache: bcache}, service: primary, rdmaDisabled: tt.rdmaDisabled,
 			}
 			if tt.hasFallback {

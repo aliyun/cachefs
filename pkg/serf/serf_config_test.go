@@ -118,6 +118,11 @@ func TestSetupSerfConfig(t *testing.T) {
 			},
 			expectTags: map[string]string{keyCachePort: "13", keySerfRole: SerfRoleInit, keySerfGroup: "group2"},
 		},
+		{
+			name:       "rdma group",
+			conf:       &SerfConfig{CachePort: 14, Group: "group3", RdmaGroup: "region-a"},
+			expectTags: map[string]string{keyCachePort: "14", keySerfGroup: "group3", keyRdmaGroup: "region-a"},
+		},
 	}
 
 	for _, tc := range tests {
