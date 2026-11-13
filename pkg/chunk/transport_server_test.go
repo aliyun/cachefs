@@ -24,7 +24,10 @@ import (
 	pb "github.com/aliyun/cachefs/pkg/rpc/cachefs"
 	"github.com/aliyun/cachefs/pkg/transfer"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type transportLoadTestStream struct {
@@ -99,6 +102,87 @@ func TestTransportLoadUnregistersUnclaimedTransfer(t *testing.T) {
 			service.mu.Lock()
 			assert.Equal(t, []transfer.RequestID{1}, service.unregisterReqIDs)
 			service.mu.Unlock()
+			bcache.AssertExpectations(t)
+		})
+	}
+}
+
+func TestTransportLoadAdvertisesFallback(t *testing.T) {
+	tests := []struct {
+		name             string
+		rdmaDisabled     bool
+		supportsFallback bool
+		useFallback      bool
+		hasFallback      bool
+		primaryAddr      string
+		wantAddr         string
+		wantSvcID        uint32
+		wantFallback     bool
+		wantFallbackAddr string
+		wantErrMessage   string
+	}{
+		{name: "normal RDMA", supportsFallback: true, hasFallback: true, wantAddr: "rdma:7712", wantSvcID: 7, wantFallbackAddr: "tcp:7713"},
+		{name: "client fallback", supportsFallback: true, useFallback: true, hasFallback: true, wantAddr: "tcp:7713", wantSvcID: 8, wantFallback: true, wantFallbackAddr: "tcp:7713"},
+		{name: "legacy client ignores use fallback", useFallback: true, wantAddr: "rdma:7712", wantSvcID: 7},
+		{name: "legacy TCP client", primaryAddr: "tcp:7712", wantAddr: "tcp:7712", wantSvcID: 7},
+		{name: "legacy client after initialization fallback", rdmaDisabled: true, hasFallback: true, wantErrMessage: "rdma initialization failed and client does not support tcp fallback"},
+		{name: "capable client after initialization fallback", rdmaDisabled: true, supportsFallback: true, hasFallback: true, wantSvcID: 8, wantFallback: true, wantFallbackAddr: "tcp:7713"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			page := NewPage([]byte("data"))
+			bcache := new(MockLocalCache)
+			if tt.wantErrMessage == "" {
+				bcache.On("load", "target", uint32(0), false).Return(page, nil, nil).Once()
+			}
+			primaryAddr := tt.primaryAddr
+			if primaryAddr == "" {
+				primaryAddr = "rdma:7712"
+			}
+			primary := &mockTransferService{addr: primaryAddr, serverID: 7}
+			fallback := &mockTransferService{addr: "tcp:7713", serverID: 8}
+			trans := &transport{
+				config: &remoteCacheConfig{blockSize: 4, serfGroup: "group"},
+				store:  &store{config: &StoreConfig{}, bcache: bcache}, service: primary, rdmaDisabled: tt.rdmaDisabled,
+			}
+			if tt.hasFallback {
+				trans.fallbackService = fallback
+			}
+			stream := &transportLoadTestStream{
+				ctx: context.Background(),
+				requests: []*pb.LoadRequest{{
+					Target: "target", BlockNum: 0, BlockSize: 4, Len: 4, SerfGroup: "group",
+					SupportsFallback: tt.supportsFallback, UseFallback: tt.useFallback,
+				}},
+				recvErr: io.EOF,
+			}
+			err := trans.Load(stream)
+			if tt.wantErrMessage != "" {
+				assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+				assert.Equal(t, tt.wantErrMessage, status.Convert(err).Message())
+				assert.Empty(t, stream.responses)
+				assert.Zero(t, primary.registerCalls)
+				assert.Zero(t, fallback.registerCalls)
+				bcache.AssertNotCalled(t, "load", "target", uint32(0))
+				return
+			}
+			assert.ErrorIs(t, err, io.EOF)
+			require.Len(t, stream.responses, 1)
+			res := stream.responses[0]
+			assert.Equal(t, tt.wantAddr, res.GetAddr())
+			assert.Equal(t, tt.wantFallbackAddr, res.GetFallbackAddr())
+			assert.Equal(t, tt.wantSvcID, res.GetSvcId())
+			if tt.wantFallback {
+				assert.Zero(t, primary.registerCalls)
+				assert.Equal(t, 1, fallback.registerCalls)
+				assert.Equal(t, []transfer.RequestID{1}, fallback.unregisterReqIDs)
+				assert.Empty(t, primary.unregisterReqIDs)
+			} else {
+				assert.Equal(t, 1, primary.registerCalls)
+				assert.Zero(t, fallback.registerCalls)
+				assert.Equal(t, []transfer.RequestID{1}, primary.unregisterReqIDs)
+				assert.Empty(t, fallback.unregisterReqIDs)
+			}
 			bcache.AssertExpectations(t)
 		})
 	}

@@ -32,6 +32,8 @@ message LoadRequest{
   uint32 block_size = 4 [(validate.rules).uint32 = {in: [4194304,8388608,16777216,33554432,67108864,134217728]}];
   string serf_group = 5 [(validate.rules).string = {min_len: 0, max_len: 256}];
   string cache_root_group = 6 [(validate.rules).string = {min_len: 0, max_len: 256}];
+  bool supports_fallback = 7;
+  bool use_fallback = 8;
 }
 
 message LoadResponse{
@@ -40,6 +42,7 @@ message LoadResponse{
   string hash = 3 [(validate.rules).string = {min_len: 0, max_len: 128}];
   uint64 req_id = 4;
   uint32 svc_id = 5;
+  string fallback_addr = 6 [(validate.rules).string = {min_len: 0, max_len: 4096}];
 }
 
 message ExchangeTrackerRequest{

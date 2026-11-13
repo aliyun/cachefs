@@ -58,7 +58,9 @@ type transport struct {
 	config *remoteCacheConfig
 	store  *store
 
-	service transfer.TransferService
+	service         transfer.TransferService
+	fallbackService transfer.TransferService
+	rdmaDisabled    bool
 
 	cacherootService transfer.TransferClient
 
@@ -76,6 +78,7 @@ func initTransferService(tcfg *transfer.TransferConfig, reg prometheus.Registere
 	}
 	if needStart {
 		if err := svc.StartServer(); err != nil {
+			_ = svc.StopServer()
 			return nil, fmt.Errorf("Start %s transfer service: %s", tcfg.Transport, err)
 		}
 	}
@@ -111,6 +114,7 @@ func newTransport(cfg *remoteCacheConfig, store *store, reg prometheus.Registere
 		logger.Infof("RDMA initialization failed: %s, fallback transport to TCP", err)
 		tcfg.Transport = transfer.TCPTransport
 		tcfg.TransportNics = []string{}
+		trans.rdmaDisabled = true
 		transferSvc, err = initTransferService(tcfg, reg, true)
 	}
 	if err != nil {
@@ -118,10 +122,27 @@ func newTransport(cfg *remoteCacheConfig, store *store, reg prometheus.Registere
 	}
 	defer func() {
 		if rerr != nil {
+			if trans.fallbackService != nil && trans.fallbackService != transferSvc {
+				_ = trans.fallbackService.StopServer()
+			}
 			_ = transferSvc.StopServer()
 		}
 	}()
 	trans.service = transferSvc
+	if trans.rdmaDisabled {
+		trans.fallbackService = transferSvc
+	} else if cfg.rdmaFallbackTcp && tcfg.RdmaEnabled() {
+		fallbackCfg := tcfg.DeepCopy()
+		fallbackCfg.Transport = transfer.TCPTransport
+		fallbackCfg.TransportNics = nil
+		fallbackCfg.BasePort += len(tcfg.TransportNics)
+		fallbackSvc, err := initTransferService(fallbackCfg, nil, true)
+		if err != nil {
+			return nil, fmt.Errorf("New TCP fallback transfer service failed: %s", err)
+		}
+		trans.fallbackService = fallbackSvc
+		logger.Infof("TCP fallback transfer service on %v", fallbackSvc.ServerAddrs())
+	}
 
 	pb.RegisterCachefsCacheServer(store.rpc.GetServer(), trans)
 	go trans.gcClient()
@@ -172,32 +193,38 @@ func newTransport(cfg *remoteCacheConfig, store *store, reg prometheus.Registere
 	return trans, nil
 }
 
-func (t *transport) getClient(addr string, cacheroot bool) (*transportClient, error) {
+func (t *transport) getClient(addr string) (*transportClient, error) {
 	t.clientMu.Lock()
 	defer t.clientMu.Unlock()
 
-	var err error
 	client, ok := t.clients[addr]
 	if ok {
 		client.touch()
 		return client, nil
 	}
-	var serviceClient transfer.TransferClient
-	if cacheroot {
-		if t.cacherootService == nil {
-			return nil, errors.New("Cacheroot transfer service client is not initialized")
-		} else {
-			serviceClient = t.cacherootService
-		}
-	} else {
-		serviceClient = t.service
-	}
-	client, err = newTransportClient(addr, t.config, serviceClient)
+	client, err := newTransportClient(addr, t)
 	if err != nil {
 		return nil, err
 	}
 	t.clients[addr] = client
 	return client, nil
+}
+
+func (t *transport) servicesFor(cacheroot bool) (transfer.TransferClient, transfer.TransferClient, error) {
+	if cacheroot {
+		if t.cacherootService == nil {
+			return nil, nil, errors.New("Cacheroot transfer service client is not initialized")
+		}
+		return t.cacherootService, nil, nil
+	}
+	return t.service, t.fallbackService, nil
+}
+
+func (t *transport) useFallback(cacheroot bool) bool {
+	if cacheroot {
+		return false
+	}
+	return t.rdmaDisabled
 }
 
 func (t *transport) gcClient() {
@@ -224,7 +251,10 @@ func (t *transport) stop() error {
 		_ = client.stop()
 	}
 	t.clientMu.Unlock()
-	t.service.StopServer()
+	if t.fallbackService != nil && t.fallbackService != t.service {
+		_ = t.fallbackService.StopServer()
+	}
+	_ = t.service.StopServer()
 	if t.clientStats != nil {
 		t.clientStats.stop()
 	}
@@ -236,7 +266,7 @@ func (t *transport) stop() error {
 
 func (t *transport) load(ctx context.Context, addr, target string, blk, blklen uint32, page *Page, group string, cacheroot bool) (rerr error) {
 	logger.Tracef("Transport load %s block %d try candidate %s", target, blk, addr)
-	client, err := t.getClient(addr, cacheroot)
+	client, err := t.getClient(addr)
 	if err != nil {
 		logger.Infof("Get cachefs transport client to %s: %s", addr, err)
 		return err
@@ -245,7 +275,7 @@ func (t *transport) load(ctx context.Context, addr, target string, blk, blklen u
 	defer cancel()
 
 	start := time.Now()
-	err = client.load(nctx, target, blk, page, group)
+	err = client.load(nctx, target, blk, page, group, cacheroot, t.useFallback(cacheroot))
 	if err != nil {
 		code := status.Code(err)
 		if code == codes.FailedPrecondition {
@@ -280,7 +310,7 @@ func (t *transport) getMetaDump() *metaInfo {
 }
 
 func (t *transport) exchangeTracker(ctx context.Context, addr string) error {
-	client, err := t.getClient(addr, false)
+	client, err := t.getClient(addr)
 	if err != nil {
 		return err
 	}
