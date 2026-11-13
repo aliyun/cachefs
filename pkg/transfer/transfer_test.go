@@ -36,11 +36,13 @@ func TestTransferConfig(t *testing.T) {
 	assert.Equal(t, uint64(1<<30), defaultCfg.RdmaMaxMem)
 
 	// RdmaEnabled
-	rdmaCfg := &TransferConfig{Transport: RDMATransport}
-	assert.True(t, rdmaCfg.RdmaEnabled())
-
-	tcpCfg := &TransferConfig{Transport: TCPTransport}
-	assert.False(t, tcpCfg.RdmaEnabled())
+	for _, tc := range []struct {
+		transport string
+		rdma      bool
+	}{{RDMATransport, true}, {TCPTransport, false}, {"unknown", false}} {
+		assert.Equal(t, tc.rdma, IsRdmaTransport(tc.transport), tc.transport)
+		assert.Equal(t, tc.rdma, (&TransferConfig{Transport: tc.transport}).RdmaEnabled(), tc.transport)
+	}
 
 	// DeepCopy
 	original := &TransferConfig{

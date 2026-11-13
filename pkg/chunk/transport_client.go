@@ -66,6 +66,9 @@ func (c *transportClient) load(ctx context.Context, target string, blk uint32, p
 	if err != nil {
 		return err
 	}
+	if useFallback && fallback == nil {
+		return fmt.Errorf("fallback to TCP not available: no local TCP service")
+	}
 	stream, err := c.grpcClient.Load(ctx)
 	if err != nil {
 		return err
@@ -79,7 +82,7 @@ func (c *transportClient) load(ctx context.Context, target string, blk uint32, p
 		SerfGroup:        config.serfGroup,
 		CacheRootGroup:   group,
 		SupportsFallback: fallback != nil,
-		UseFallback:      useFallback && fallback != nil,
+		UseFallback:      useFallback,
 	}
 	if err = stream.Send(req); err != nil {
 		return err
@@ -104,9 +107,6 @@ func (c *transportClient) load(ctx context.Context, target string, blk uint32, p
 	service := primary
 	downAddr := res.GetAddr()
 	if useFallback {
-		if fallback == nil {
-			return fmt.Errorf("fallback to TCP not available: no local TCP service")
-		}
 		if res.GetFallbackAddr() == "" {
 			return fmt.Errorf("fallback to TCP not available: no TCP address")
 		}

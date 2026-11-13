@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/aliyun/cachefs/pkg/metric"
+	pb "github.com/aliyun/cachefs/pkg/rpc/cacheroot"
 	"github.com/aliyun/cachefs/pkg/rpcsvc"
 	"github.com/stretchr/testify/assert"
 )
@@ -43,6 +44,24 @@ func serverStore(t *testing.T) (*store, rpcsvc.RpcService) {
 	svc, err := rpcsvc.NewRpcService(&rpcsvc.RpcConfig{Addr: "127.0.0.1:0"})
 	assert.NoError(t, err)
 	return &store{cacherootRpc: svc}, svc
+}
+
+func TestCacheRootQueryIgnoresRdmaGroup(t *testing.T) {
+	manager := &cacherootManager{peer: &peerCache{
+		config: &remoteCacheConfig{localAddr: "local:1", blockSize: 4, transport: "rdma", rdmaGroup: "region-a", serfGroup: "deployment"},
+		metaMap: map[string]map[uint32]map[string]struct{}{
+			"target": {0: {"local:1": {}, "same:1": {}, "other:1": {}, "unknown:1": {}}},
+		},
+	}}
+	manager.InitMetrics(nil)
+	for attempt := 0; attempt < 20; attempt++ {
+		res, err := manager.Query(context.Background(), &pb.QueryRequest{Target: "target", BlockSize: 4})
+		if !assert.NoError(t, err) {
+			return
+		}
+		assert.ElementsMatch(t, []string{"local:1", "same:1", "other:1", "unknown:1"}, res.GetNodes())
+		assert.Equal(t, "deployment", res.GetSerfGroup())
+	}
 }
 
 func TestTrackerInfo(t *testing.T) {

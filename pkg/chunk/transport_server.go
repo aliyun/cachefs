@@ -94,6 +94,11 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 	if serverFallback && t.fallbackService == nil {
 		return status.Error(codes.FailedPrecondition, "rdma disabled and tcp fallback not enabled")
 	}
+	clientFallback := req.GetSupportsFallback() && req.GetUseFallback()
+	primaryIsRdma := transfer.IsRdmaTransport(t.config.transport)
+	if clientFallback && t.fallbackService == nil && primaryIsRdma {
+		return status.Error(codes.FailedPrecondition, "client requires tcp fallback but tcp fallback not enabled")
+	}
 
 	page, err := s.doLoad(ctx, target, blknum, blklen, false, false)
 	if err != nil {
@@ -119,7 +124,6 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 		return status.Errorf(codes.Unknown, "data size mismatch (%d != %d)", blklen, dataLen)
 	}
 
-	clientFallback := req.GetSupportsFallback() && req.GetUseFallback()
 	useFallbackService := t.fallbackService != nil && (serverFallback || clientFallback)
 	uploadService := t.service
 	if useFallbackService {
@@ -162,6 +166,8 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 			}
 		}
 		res.FallbackAddr = fallbackAddr
+	} else if clientFallback {
+		res.FallbackAddr = downAddr
 	}
 	if serverFallback {
 		res.Addr = ""

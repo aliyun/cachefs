@@ -32,6 +32,7 @@ import (
 	"github.com/aliyun/cachefs/pkg/utils"
 	"github.com/aliyun/cachefs/pkg/vfs"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli/v2"
 )
 
@@ -806,6 +807,48 @@ func TestTransportNicParsing(t *testing.T) {
 		conf, err := genStoreConf(newContext(tc.input), "/mnt/source")
 		assert.NoError(err, tc.name)
 		assert.Equal(tc.expect, conf.TransportNics, tc.name)
+	}
+}
+
+func TestRdmaGroupConfig(t *testing.T) {
+	tests := []struct {
+		name, protocol, group, cacheroot string
+		fallback, autoFallback           bool
+		wantGroup                        string
+	}{
+		{name: "default empty group", protocol: "rdma"},
+		{name: "whitespace disables grouping", protocol: "rdma", group: " \t\n "},
+		{name: "trim whitespace and preserve case", protocol: "RDMA", group: " Region-A ", fallback: true, wantGroup: "Region-A"},
+		{name: "RDMA enables fallback", protocol: "rdma", group: "a", autoFallback: true, wantGroup: "a"},
+		{name: "RDMA with fallback enabled", protocol: "rdma", group: "a", fallback: true, wantGroup: "a"},
+		{name: "TCP ignores group", protocol: "tcp", group: "a"},
+		{name: "cacheroot RDMA alone does not enable grouping", protocol: "tcp", cacheroot: "rdma", group: "a"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			set := flag.NewFlagSet("test", flag.ContinueOnError)
+			for _, f := range expandFlags([][]cli.Flag{commonFlags(), cacheFlags()}) {
+				require.NoError(t, f.Apply(set))
+			}
+			c := cli.NewContext(nil, set, nil)
+			for name, value := range map[string]string{
+				"cache-nic": "lo", "transport": tc.protocol, "rdma-group": tc.group,
+				"rdma-fallback-tcp": fmt.Sprint(tc.fallback), "serf-group": "deployment", "serf-leave-delay": "0",
+			} {
+				require.NoError(t, c.Set(name, value))
+			}
+			if tc.cacheroot != "" {
+				require.NoError(t, c.Set("cacheroot-transport", tc.cacheroot))
+			}
+			storeConf, err := genStoreConf(c, "memory")
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantGroup, storeConf.RdmaGroup)
+			assert.Equal(t, tc.fallback || tc.autoFallback, storeConf.RdmaFallbackTcp)
+			serfConf, err := genSerfConf(c, storeConf)
+			require.NoError(t, err)
+			assert.Equal(t, "deployment", serfConf.Group)
+			assert.Equal(t, tc.wantGroup, serfConf.RdmaGroup)
+		})
 	}
 }
 

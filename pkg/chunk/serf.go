@@ -144,6 +144,8 @@ func (r *peerCache) handleSerfMemberJoinEvent() {
 					continue
 				}
 				allAddrs = append(allAddrs, mem.Addr)
+				// Record group before exchange so the first known blocks use it.
+				r.transport.updateRdmaPeer(mem.Addr, mem.RdmaGroup)
 				if mem.Role != ss.SerfRoleSeeder {
 					continue
 				}
@@ -190,6 +192,7 @@ func (r *peerCache) handleSerfMemberLeaveEvent() {
 				b, t := r.cleanupMember(mem.Addr)
 				rmblk += b
 				rmtarget += t
+				r.transport.updateRdmaPeer(mem.Addr, "")
 			}
 			r.seederMu.Lock()
 			for _, mem := range members {

@@ -320,6 +320,7 @@ func TestSerfServiceStartStop(t *testing.T) {
 
 func TestRegisterUser(t *testing.T) {
 	cfg := newTestSerfConfig()
+	cfg.RdmaGroup = "region-a"
 	ss := NewSerfService(cfg, nil)
 	svc, ok := ss.(*serfService)
 	assert.Equal(t, true, ok, "cast to *serfService")
@@ -396,7 +397,7 @@ func TestRegisterUser(t *testing.T) {
 	case <-timer.C:
 		t.Error("member join event timed out")
 	case members := <-user1.MemberJoinCh:
-		assert.Equal(t, []SerfMember{SerfMember{Name: hostname, Addr: "127.0.0.1:7788"}}, members, "member join")
+		assert.Equal(t, []SerfMember{{Name: hostname, Addr: "127.0.0.1:7788", RdmaGroup: "region-a"}}, members, "member join")
 	}
 	assert.Equal(t, map[string]string{"127.0.0.1:7788": hostname}, svc.members, "members after join")
 

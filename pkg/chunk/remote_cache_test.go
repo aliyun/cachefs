@@ -17,10 +17,15 @@
 package chunk
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aliyun/cachefs/pkg/metric"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/willf/bitset"
 )
@@ -135,6 +140,106 @@ func TestServeRevoke(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
+type peerLoadTransport struct {
+	err       error
+	rdmaPeers map[string]struct{}
+	loads     int
+}
+
+func (t *peerLoadTransport) load(context.Context, string, string, uint32, uint32, *Page, string, bool) error {
+	t.loads++
+	return t.err
+}
+func (t *peerLoadTransport) updateRdmaPeer(string, string) {}
+func (t *peerLoadTransport) isRdmaPeer(addr string) bool {
+	_, ok := t.rdmaPeers[addr]
+	return ok
+}
+func (t *peerLoadTransport) exchangeTracker(context.Context, string) error { return nil }
+func (t *peerLoadTransport) stop() error                                   { return nil }
+
+func TestFindRdmaCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		same, other, n int
+	}{
+		{"no same-group peers", 0, 20, 10},
+		{"fewer same-group peers than limit", 3, 20, 10},
+		{"same-group peers equal limit", 10, 20, 10},
+		{"same-group peers exceed limit", 30, 20, 10},
+		{"total peers below limit", 2, 3, 10},
+		{"custom limit", 3, 20, 2},
+		{"unlimited with zero limit", 3, 20, 0},
+		{"unlimited with negative limit", 3, 20, -1},
+		{"only local peer", 0, 0, 10},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			groups := map[string]string{"local:1": "region-a"}
+			rdmaPeers := map[string]struct{}{"local:1": {}}
+			hosts := map[string]struct{}{"local:1": {}}
+			for i := 0; i < tc.same+tc.other; i++ {
+				addr := fmt.Sprintf("peer-%d:1", i)
+				hosts[addr] = struct{}{}
+				if i < tc.same {
+					groups[addr] = "region-a"
+					rdmaPeers[addr] = struct{}{}
+				} else if i%2 == 0 {
+					groups[addr] = "region-b"
+				}
+			}
+			r := &peerCache{
+				config:    &remoteCacheConfig{localAddr: "local:1", transport: "rdma", rdmaGroup: "region-a"},
+				transport: &peerLoadTransport{rdmaPeers: rdmaPeers},
+				metaMap:   map[string]map[uint32]map[string]struct{}{"target": {0: hosts}},
+			}
+			wantSame := tc.same
+			wantTotal := tc.same + tc.other
+			if tc.n > 0 {
+				wantSame = min(wantSame, tc.n)
+				wantTotal = min(wantTotal, tc.n)
+			}
+			for attempt := 0; attempt < 20; attempt++ {
+				got := r.findRdmaCandidates("target", 0, tc.n)
+				assert.Len(t, got, wantTotal)
+				seen := map[string]bool{}
+				for i, addr := range got {
+					assert.False(t, seen[addr])
+					seen[addr] = true
+					assert.Equal(t, i < wantSame, groups[addr] == "region-a")
+					assert.NotEqual(t, "local:1", addr)
+				}
+			}
+			assert.Empty(t, r.findRdmaCandidates("missing", 0, tc.n))
+			assert.Empty(t, r.findRdmaCandidates("target", 1, tc.n))
+		})
+	}
+
+	t.Run("blacklist checked at load", func(t *testing.T) {
+		groups := map[string]string{"same-0:1": "region-a", "same-1:1": "region-a"}
+		hosts := map[string]struct{}{"same-0:1": {}, "same-1:1": {}, "other:1": {}}
+		blacklists := map[string]time.Time{"same-0:1": time.Now(), "same-1:1": time.Now()}
+		transport := &peerLoadTransport{err: errors.New("miss"), rdmaPeers: map[string]struct{}{"same-0:1": {}, "same-1:1": {}}}
+		r := &peerCache{
+			config:    &remoteCacheConfig{transport: "rdma", rdmaGroup: "region-a", blacklistTime: time.Minute},
+			transport: transport, store: &store{remoteBlacklist: metric.NewCounter(prometheus.CounterOpts{Name: "blacklist"})},
+			metaMap: map[string]map[uint32]map[string]struct{}{"target": {0: hosts}}, blacklists: blacklists,
+		}
+		got := r.loadCandidates("target", 0)
+		if !assert.Len(t, got, 3) {
+			return
+		}
+		for i, addr := range got[:2] {
+			assert.Equal(t, "region-a", groups[addr])
+			assert.Contains(t, blacklists, addr, i)
+		}
+		assert.Equal(t, "other:1", got[2])
+		_, err := r.loadFromPeer(context.Background(), "target", 0, 1, got, "", false)
+		assert.ErrorIs(t, err, ErrNotFound)
+		assert.Equal(t, 1, transport.loads)
+		assert.Equal(t, float64(2), r.store.remoteBlacklist.Load())
+	})
+}
+
 func TestFindCandidates(t *testing.T) {
 	metaMap := map[string]map[uint32]map[string]struct{}{
 		"target1": {
@@ -230,6 +335,15 @@ func TestFindCandidates(t *testing.T) {
 		if len(result) != 3 {
 			t.Errorf("expected 3 candidates, got %d", len(result))
 		}
+	})
+
+	t.Run("GroupPolicyDoesNotAffectLookup", func(t *testing.T) {
+		r := &peerCache{
+			config:  &remoteCacheConfig{transport: "rdma", rdmaGroup: "region-a"},
+			metaMap: map[string]map[uint32]map[string]struct{}{"target": {0: {"a": {}, "b": {}, "c": {}}}},
+		}
+		assert.Len(t, r.findCandidates("target", 0, 2, true), 2)
+		assert.ElementsMatch(t, []string{"a", "b", "c"}, r.findCandidates("target", 0, 0, true))
 	})
 }
 

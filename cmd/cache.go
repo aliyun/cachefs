@@ -286,6 +286,7 @@ func genSerfConf(c *cli.Context, storeConf *chunk.StoreConfig) (*serf.SerfConfig
 		JoinCmd:   c.String("serf-memberlist-cmd"),
 		MaxRetry:  uint32(c.Int("serf-maxretry")),
 		Group:     c.String("serf-group"),
+		RdmaGroup: storeConf.RdmaGroup,
 		NodeName:  c.String("serf-node-name"),
 		HashRing:  storeConf.HashringEnabled(),
 		NodeCount: c.Int("virtual-node-count"),
@@ -353,6 +354,7 @@ func genStoreConf(c *cli.Context, cacheDir string) (*chunk.StoreConfig, error) {
 		RdmaBufCount:       c.Int("rdma-buffer-count"),
 		RdmaMaxMem:         uint64(c.Int("rdma-max-mem")),
 		RdmaFallbackTcp:    c.Bool("rdma-fallback-tcp"),
+		RdmaGroup:          strings.TrimSpace(c.String("rdma-group")),
 		CacheRootPort:      c.Int("cacheroot-port"),
 		CacheRootAddrs:     strings.Fields(c.String("cacheroot-tracker")),
 		CacheRootXprt:      strings.ToLower(c.String("cacheroot-transport")),
@@ -364,6 +366,15 @@ func genStoreConf(c *cli.Context, cacheDir string) (*chunk.StoreConfig, error) {
 			GCPercent:    c.Int("go-gc"),
 			GCPercentSet: c.IsSet("go-gc"),
 		},
+	}
+	if cfg.RdmaGroup != "" {
+		if !transfer.IsRdmaTransport(cfg.Transport) {
+			logger.Warnf("--rdma-group %q is ignored for %s transport", cfg.RdmaGroup, cfg.Transport)
+			cfg.RdmaGroup = ""
+		} else if !cfg.RdmaFallbackTcp {
+			logger.Warnf("--rdma-group %q is set without --rdma-fallback-tcp; enabling TCP fallback automatically", cfg.RdmaGroup)
+			cfg.RdmaFallbackTcp = true
+		}
 	}
 	if c.IsSet("go-memlimit") {
 		if mib := c.Int64("go-memlimit"); mib <= 0 || mib > math.MaxInt64>>20 {

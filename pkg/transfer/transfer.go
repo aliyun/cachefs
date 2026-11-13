@@ -155,8 +155,12 @@ func DefaultTransferConfig() *TransferConfig {
 	}
 }
 
+func IsRdmaTransport(transport string) bool {
+	return transport == RDMATransport
+}
+
 func (cfg *TransferConfig) RdmaEnabled() bool {
-	return cfg.Transport == RDMATransport
+	return IsRdmaTransport(cfg.Transport)
 }
 
 func (cfg *TransferConfig) IsValidTransport() bool {
