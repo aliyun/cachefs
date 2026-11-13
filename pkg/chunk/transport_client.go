@@ -29,6 +29,7 @@ import (
 
 type transportClient struct {
 	transport  *transport
+	peerAddr   string
 	grpcClient pb.CachefsCacheClient
 	conn       *grpc.ClientConn
 	atime      time.Time
@@ -41,6 +42,7 @@ func newTransportClient(addr string, transport *transport, opts ...grpc.DialOpti
 	}
 	client := &transportClient{
 		transport:  transport,
+		peerAddr:   addr,
 		grpcClient: pb.NewCachefsCacheClient(conn),
 		conn:       conn,
 		atime:      time.Now(),
@@ -60,12 +62,13 @@ func (c *transportClient) stop() error {
 	return c.conn.Close()
 }
 
-func (c *transportClient) load(ctx context.Context, target string, blk uint32, page *Page, group string, cacheroot, useFallback bool) error {
+func (c *transportClient) load(ctx context.Context, target string, blk uint32, page *Page, group string, cacheroot bool) error {
 	config := c.transport.config
 	primary, fallback, err := c.transport.servicesFor(cacheroot)
 	if err != nil {
 		return err
 	}
+	useFallback := c.transport.useFallback(c.peerAddr, cacheroot)
 	if useFallback && fallback == nil {
 		return fmt.Errorf("fallback to TCP not available: no local TCP service")
 	}
