@@ -1002,36 +1002,40 @@ func (c *mcache) cleanupExpire() {
 
 	for {
 		time.Sleep(interval)
-		now := time.Now()
-		ectx := newMemEvictionContext()
-		c.Lock()
-		hasPins := c.store.pinCache.hasPins()
-
-		for key, mi := range c.pages {
-			// Do not expire protected blocks: a client may still access their
-			// zero-copy descriptors until the matching reference is released.
-			if c.isLocked(key) {
-				c.evictsSkipLocked.Add(1)
-				continue
-			}
-			// Pinned blocks are exempt from expiration.
-			if hasPins && c.store.pinCache.isPinned(key.Target) {
-				c.evictsSkipPinned.Add(1)
-				continue
-			}
-			age := now.Sub(mi.atime)
-			if age > interval {
-				ectx.age = age
-				c.evictCacheItem(ectx, key, mi, evictionExpire)
-			}
-		}
-		if len(ectx.todel) > 0 {
-			logger.Infof("Expire cache: remaining %d blocks (%d MB), expired %d blocks (%d MB)",
-				len(c.pages), c.used>>20, len(ectx.todel), ectx.freed>>20)
-		}
-		c.Unlock()
-		c.revokeDel(ectx)
+		c.expire(time.Now())
 	}
+}
+
+// expire evicts blocks not accessed for longer than cacheExpire.
+func (c *mcache) expire(now time.Time) {
+	ectx := newMemEvictionContext()
+	c.Lock()
+	hasPins := c.store.pinCache.hasPins()
+
+	for key, mi := range c.pages {
+		// Do not expire protected blocks: a client may still access their
+		// zero-copy descriptors until the matching reference is released.
+		if c.isLocked(key) {
+			c.evictsSkipLocked.Add(1)
+			continue
+		}
+		// Pinned blocks are exempt from expiration.
+		if hasPins && c.store.pinCache.isPinned(key.Target) {
+			c.evictsSkipPinned.Add(1)
+			continue
+		}
+		age := now.Sub(mi.atime)
+		if age > c.cacheExpire {
+			ectx.age = age
+			c.evictCacheItem(ectx, key, mi, evictionExpire)
+		}
+	}
+	if len(ectx.todel) > 0 {
+		logger.Infof("Expire cache: remaining %d blocks (%d MB), expired %d blocks (%d MB)",
+			len(c.pages), c.used>>20, len(ectx.todel), ectx.freed>>20)
+	}
+	c.Unlock()
+	c.revokeDel(ectx)
 }
 
 func (c *mcache) revokeDel(ectx *memEvictionContext) {

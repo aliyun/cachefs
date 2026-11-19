@@ -917,6 +917,31 @@ func TestGetExpireInterval(t *testing.T) {
 	}
 }
 
+func TestMCacheExpireUsesCacheExpire(t *testing.T) {
+	const day = 24 * time.Hour
+	cache := newTestMcache(t)
+	cache.cacheExpire = 7 * day
+	now := time.Now()
+
+	idle := CacheKey{Target: "target", Blk: 1}
+	stale := CacheKey{Target: "target", Blk: 2}
+	idlePage := NewPage(make([]byte, 10))
+	stalePage := NewPage(make([]byte, 20))
+	idlePage.Acquire()
+	stalePage.Acquire()
+	// Older than the 24h check interval but within cache-expire: must stay.
+	cache.pages[idle] = memItem{atime: now.Add(-2 * day), page: idlePage}
+	cache.pages[stale] = memItem{atime: now.Add(-8 * day), page: stalePage}
+	cache.used = 30
+
+	cache.expire(now)
+
+	assert.Contains(t, cache.pages, idle)
+	assert.NotContains(t, cache.pages, stale)
+	assert.Equal(t, int64(10), cache.used)
+	assert.Equal(t, int32(1), stalePage.refs)
+}
+
 func TestMCacheRemoveByPrefixKeepMultiplePrefixes(t *testing.T) {
 	cache := newTestMcache(t)
 
