@@ -173,6 +173,44 @@ func TestDiskCacheExpireUsesCacheExpire(t *testing.T) {
 	})
 }
 
+func TestScanCachedKeepsNewerAtime(t *testing.T) {
+	cache, mockRCache := newTestCache(t, t.TempDir())
+	// Written long ago and kept alive by preload since then, far enough to
+	// overflow a millisecond uint32 atime comparison.
+	diskTime := time.Now().Add(-30 * 24 * time.Hour)
+	// tracked: in-memory atime bumped by a cache hit, newer than on-disk
+	// stale: in-memory atime older than on-disk, e.g. file was rewritten
+	// untracked: newly found on disk
+	tracked := CacheKey{Target: "/target", Blk: 1}
+	stale := CacheKey{Target: "/target", Blk: 2}
+	untracked := CacheKey{Target: "/target", Blk: 3}
+	for _, k := range []CacheKey{tracked, stale, untracked} {
+		p := cache.cachePath(k)
+		if !assert.NoError(t, os.MkdirAll(filepath.Dir(p), 0755)) ||
+			!assert.NoError(t, os.WriteFile(p, make([]byte, 10), 0644)) ||
+			!assert.NoError(t, os.Chtimes(p, diskTime, diskTime)) {
+			return
+		}
+	}
+	fi, err := os.Stat(cache.cachePath(tracked))
+	if !assert.NoError(t, err) {
+		return
+	}
+	diskAtime := uint32(getAtime(fi).Unix())
+	memAtime := uint32(time.Now().Unix())
+	cache.keys[tracked] = cacheItem{size: 10, atime: memAtime}
+	cache.keys[stale] = cacheItem{size: 10, atime: diskAtime - 1}
+	mockRCache.On("announce", untracked.Target, uint64(0), untracked.Blk).Once()
+
+	cache.scanCached()
+
+	assert.Equal(t, memAtime, cache.keys[tracked].atime)
+	assert.Equal(t, diskAtime, cache.keys[stale].atime)
+	assert.Equal(t, diskAtime, cache.keys[untracked].atime)
+	assert.Equal(t, int64(30), cache.used)
+	mockRCache.AssertExpectations(t)
+}
+
 func TestStats(t *testing.T) {
 	diskCache := &diskCache{
 		pages: make(map[CacheKey]*Page),
