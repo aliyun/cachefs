@@ -44,7 +44,7 @@ const (
 
 type cacheItem struct {
 	size  int32
-	atime uint32
+	atime uint32 // in seconds and won't wrap around until 2106
 }
 
 type ChunkReader interface {
@@ -557,7 +557,7 @@ func (cache *diskCache) cleanupExpire() {
 
 	for {
 		time.Sleep(interval)
-		now := uint32(time.Now().UnixMilli())
+		now := uint32(time.Now().Unix())
 		ectx := newCacheEvictionContext()
 		cache.Lock()
 		hasPins := cache.store.pinCache.hasPins()
@@ -575,7 +575,7 @@ func (cache *diskCache) cleanupExpire() {
 				continue
 			}
 			age := now - value.atime
-			if age > uint32(interval.Milliseconds()) {
+			if age > uint32(interval.Seconds()) {
 				ectx.age = age
 				cache.evictKeyCacheItem(ectx, key, int64(value.size), evictionExpire)
 			}
@@ -914,7 +914,7 @@ func (cache *diskCache) load(target string, blk uint32, _ bool) (*Page, ChunkRea
 	if err == nil {
 		if it, ok := cache.keys[key]; ok {
 			// update atime
-			cache.keys[key] = cacheItem{size: it.size, atime: uint32(time.Now().UnixMilli())}
+			cache.keys[key] = cacheItem{size: it.size, atime: uint32(time.Now().Unix())}
 		} else {
 			// found untracked cache file, announce as well
 			cache.store.rcache.announce(target, 0, blk)
@@ -1045,7 +1045,7 @@ func (cache *diskCache) check(target string, blk uint32) bool {
 
 	// update atime
 	if it, ok := cache.keys[key]; ok {
-		cache.keys[key] = cacheItem{size: it.size, atime: uint32(time.Now().UnixMilli())}
+		cache.keys[key] = cacheItem{size: it.size, atime: uint32(time.Now().Unix())}
 	}
 	return true
 }
@@ -1136,7 +1136,7 @@ func (cache *diskCache) getBlockFile(target string, blk uint32) (*os.File, error
 	}
 	if it, ok := cache.keys[key]; ok {
 		// update atime
-		cache.keys[key] = cacheItem{size: it.size, atime: uint32(time.Now().UnixMilli())}
+		cache.keys[key] = cacheItem{size: it.size, atime: uint32(time.Now().Unix())}
 	}
 	return f, nil
 }
@@ -1267,7 +1267,7 @@ func (cache *diskCache) commitBlockFile(target string, blk uint32, commit bool) 
 	cache.cacheWrites.Add(1)
 	cache.cacheWriteBytes.Add(float64(bf.size))
 	cache.cacheWriteHist.Observe(timeUsed.Seconds())
-	cache.add(key, int32(bf.size), uint32(time.Now().UnixMilli()))
+	cache.add(key, int32(bf.size), uint32(time.Now().Unix()))
 	logger.Debugf("Daemon commited %s block %d in %s", target, blk, timeUsed)
 	return nil
 }
@@ -1289,7 +1289,7 @@ func (cache *diskCache) metaPath(key CacheKey) (string, string, string) {
 
 func (cache *diskCache) doFlush(key CacheKey, data []byte) {
 	if cache.flushPage(key, data) == nil {
-		cache.add(key, int32(len(data)), uint32(time.Now().UnixMilli()))
+		cache.add(key, int32(len(data)), uint32(time.Now().Unix()))
 	}
 }
 
@@ -1507,7 +1507,7 @@ func (cache *diskCache) evictCacheItem(ectx *cacheEvictionContext, key CacheKey,
 			logger.Debugf("remove %s by prefix %s", key.String(), ectx.prefix)
 		}
 	} else {
-		logger.Debugf("remove %s from cache, age: %dms", key.String(), ectx.age)
+		logger.Debugf("remove %s from cache, age: %ds", key.String(), ectx.age)
 	}
 }
 
@@ -1529,7 +1529,7 @@ func (cache *diskCache) cleanup(skipKeys map[CacheKey]struct{}) {
 // locked
 func (cache *diskCache) doCleanup(isBurst bool, evictionType string, skipKeys map[CacheKey]struct{}) (int64, int64) {
 	start := time.Now()
-	var now = uint32(start.UnixMilli())
+	var now = uint32(start.Unix())
 	goal, num := cache.getCleanupGoal(isBurst)
 	ectx := newCacheEvictionContext()
 
@@ -1769,7 +1769,7 @@ func (cache *diskCache) scanCached() {
 			}
 
 			// Add and announce cache, but skip announce previously cached blocks
-			atime := uint32(getAtime(fi).UnixMilli())
+			atime := uint32(getAtime(fi).Unix())
 			cache.add(key, int32(fi.Size()), atime)
 			// tmpKeys are read-only, no need to lock
 			if _, ok := cache.tmpKeys[key]; !ok {
