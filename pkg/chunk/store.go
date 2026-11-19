@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -89,7 +90,8 @@ type PeerLoadStats struct {
 }
 
 func (k *CacheKey) String() string {
-	return fmt.Sprintf("%s/%d", k.Target, k.Blk)
+	var digits [10]byte // Maximum decimal length of a uint32.
+	return k.Target + "/" + string(strconv.AppendUint(digits[:0], uint64(k.Blk), 10))
 }
 
 type targetInfo struct {

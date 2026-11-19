@@ -38,6 +38,73 @@ import (
 	"github.com/willf/bitset"
 )
 
+func TestCacheKeyString(t *testing.T) {
+	for _, tt := range []struct {
+		key  CacheKey
+		want string
+	}{
+		{CacheKey{"/models/shard.bin:4194304-1750000000-0", 0}, "/models/shard.bin:4194304-1750000000-0/0"},
+		{CacheKey{"weights-\u00e9/shard.bin", 1024}, "weights-\u00e9/shard.bin/1024"},
+		{CacheKey{"cache/", 4294967295}, "cache//4294967295"},
+		{CacheKey{"", 7}, "/7"},
+	} {
+		assert.Equal(t, tt.want, tt.key.String())
+	}
+}
+
+func TestCacheKeyStringConcurrent(t *testing.T) {
+	cases := []struct {
+		key  CacheKey
+		want string
+	}{
+		{CacheKey{Target: "/models/a", Blk: 7}, "/models/a/7"},
+		{CacheKey{Target: "/models/weights", Blk: 1024}, "/models/weights/1024"},
+		{CacheKey{Target: "cache/", Blk: 4_294_967_295}, "cache//4294967295"},
+	}
+	for worker := 0; worker < 8; worker++ {
+		t.Run(fmt.Sprintf("worker-%d", worker), func(t *testing.T) {
+			t.Parallel()
+			for i := 0; i < 1000; i++ {
+				tc := &cases[(worker+i)%len(cases)]
+				if got := tc.key.String(); got != tc.want {
+					t.Fatalf("CacheKey.String() = %q, want %q", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func FuzzCacheKeyString(f *testing.F) {
+	f.Add("", uint32(0))
+	f.Add("/models/weights-\U0001f4e6.bin:4194304-1750000000-0", uint32(7))
+	f.Add("cache\x00\xff/", uint32(4_294_967_295))
+	for _, block := range []uint32{9, 10, 99, 100, 255, 256, 999_999_999, 1_000_000_000, 2_147_483_647, 2_147_483_648, 4_294_967_294} {
+		f.Add("/models/shard.bin", block)
+	}
+
+	f.Fuzz(func(t *testing.T, target string, block uint32) {
+		key := CacheKey{Target: target, Blk: block}
+		want := fmt.Sprintf("%s/%d", target, block)
+		if got := key.String(); got != want {
+			t.Fatalf("CacheKey{%q, %d}.String() = %q, want %q", target, block, got, want)
+		}
+	})
+}
+
+var cacheKeyStringSink string
+
+func BenchmarkCacheKeyString(b *testing.B) {
+	for _, block := range []uint32{7, 1024} {
+		key := CacheKey{Target: "/models/shard.bin:4294967296-1750000000-0", Blk: block}
+		b.Run(fmt.Sprintf("block=%d", block), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				cacheKeyStringSink = key.String()
+			}
+		})
+	}
+}
+
 func TestGenBurstSizes(t *testing.T) {
 	tests := []struct {
 		name            string

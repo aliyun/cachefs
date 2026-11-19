@@ -76,6 +76,32 @@ func TestDiskCacheGetCacheState(t *testing.T) {
 	assert.Equal(t, int64(0), st.PinnedBytes)
 }
 
+func TestDiskCacheGetCacheStateHashKeys(t *testing.T) {
+	const target = "/models/weights/"
+	const diskKey = "/models/weights//4294967295"
+	const pendingKey = "/models/weights//100"
+
+	var hashed []string
+	serf := &MockSerfService{hashHitFn: func(key string) bool {
+		hashed = append(hashed, key)
+		return key == diskKey
+	}}
+	cache := &diskCache{
+		store: &store{serf: serf},
+		keys: map[CacheKey]cacheItem{
+			{Target: target, Blk: 4294967295}: {size: 4096},
+		},
+		pages: map[CacheKey]*Page{
+			{Target: target, Blk: 100}: {Data: make([]byte, 128)},
+		},
+	}
+
+	st := cache.getCacheState()
+	assert.ElementsMatch(t, []string{diskKey, pendingKey}, hashed)
+	assert.EqualValues(t, 1, st.HashHitBlocks)
+	assert.EqualValues(t, 4096, st.HashHitBytes)
+}
+
 // A store with a pinned prefix marks matching cached blocks as pinned across
 // both backends; non-matching targets stay unpinned.
 func TestGetCacheStatePinned(t *testing.T) {
