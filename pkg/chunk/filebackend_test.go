@@ -126,6 +126,53 @@ func TestParseCacheKey(t *testing.T) {
 	}
 }
 
+func TestDiskCacheExpireUsesCacheExpire(t *testing.T) {
+	const day = 24 * time.Hour
+	now := uint32(time.Now().Unix())
+	ago := func(d time.Duration) uint32 { return now - uint32(d.Seconds()) }
+
+	t.Run("evict only blocks older than cache-expire", func(t *testing.T) {
+		cache, mockRCache := newTestCache(t, t.TempDir())
+		cache.cacheExpire = 7 * day
+		fresh := CacheKey{Target: "target", Blk: 1}
+		idle := CacheKey{Target: "target", Blk: 2}
+		stale := CacheKey{Target: "target", Blk: 3}
+		cache.keys[fresh] = cacheItem{size: 100, atime: now}
+		// Older than the 24h check interval but within cache-expire: must stay.
+		cache.keys[idle] = cacheItem{size: 100, atime: ago(2 * day)}
+		cache.keys[stale] = cacheItem{size: 100, atime: ago(8 * day)}
+		cache.used = 300
+		mockRCache.On("revoke", stale.Target, uint64(0), stale.Blk).Once()
+
+		cache.expire(now)
+
+		assert.Contains(t, cache.keys, fresh)
+		assert.Contains(t, cache.keys, idle)
+		assert.NotContains(t, cache.keys, stale)
+		assert.Equal(t, int64(200), cache.used)
+		mockRCache.AssertExpectations(t)
+	})
+
+	t.Run("long expiration still evicts", func(t *testing.T) {
+		cache, mockRCache := newTestCache(t, t.TempDir())
+		// Beyond the range of millisecond uint32 atime (~49.7 days).
+		cache.cacheExpire = 60 * day
+		idle := CacheKey{Target: "target", Blk: 1}
+		stale := CacheKey{Target: "target", Blk: 2}
+		cache.keys[idle] = cacheItem{size: 100, atime: ago(30 * day)}
+		cache.keys[stale] = cacheItem{size: 100, atime: ago(70 * day)}
+		cache.used = 200
+		mockRCache.On("revoke", stale.Target, uint64(0), stale.Blk).Once()
+
+		cache.expire(now)
+
+		assert.Contains(t, cache.keys, idle)
+		assert.NotContains(t, cache.keys, stale)
+		assert.Equal(t, int64(100), cache.used)
+		mockRCache.AssertExpectations(t)
+	})
+}
+
 func TestStats(t *testing.T) {
 	diskCache := &diskCache{
 		pages: make(map[CacheKey]*Page),

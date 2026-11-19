@@ -557,37 +557,42 @@ func (cache *diskCache) cleanupExpire() {
 
 	for {
 		time.Sleep(interval)
-		now := uint32(time.Now().Unix())
-		ectx := newCacheEvictionContext()
-		cache.Lock()
-		hasPins := cache.store.pinCache.hasPins()
-
-		for key, value := range cache.keys {
-			// Do not expire protected blocks: a client may still access their
-			// zero-copy descriptors until the matching reference is released.
-			if cache.isLocked(key) {
-				cache.evictsSkipLocked.Add(1)
-				continue
-			}
-			// Pinned blocks are exempt from expiration.
-			if hasPins && cache.store.pinCache.isPinned(key.Target) {
-				cache.evictsSkipPinned.Add(1)
-				continue
-			}
-			age := now - value.atime
-			if age > uint32(interval.Seconds()) {
-				ectx.age = age
-				cache.evictKeyCacheItem(ectx, key, int64(value.size), evictionExpire)
-			}
-		}
-		delCnt := len(ectx.todel)
-		if delCnt > 0 {
-			logger.Infof("Expire cache (%s): remaining %d blocks (%d MB), expired %d blocks (%d MB)", cache.dir, len(cache.keys), cache.used>>20, delCnt, ectx.freed>>20)
-		}
-		cache.Unlock()
-		cache.revokeDel(ectx)
-
+		cache.expire(uint32(time.Now().Unix()))
 	}
+}
+
+// expire evicts blocks not accessed for longer than cacheExpire.
+func (cache *diskCache) expire(now uint32) {
+	threshold := int64(cache.cacheExpire.Seconds())
+	ectx := newCacheEvictionContext()
+	cache.Lock()
+	hasPins := cache.store.pinCache.hasPins()
+
+	for key, value := range cache.keys {
+		// Do not expire protected blocks: a client may still access their
+		// zero-copy descriptors until the matching reference is released.
+		if cache.isLocked(key) {
+			cache.evictsSkipLocked.Add(1)
+			continue
+		}
+		// Pinned blocks are exempt from expiration.
+		if hasPins && cache.store.pinCache.isPinned(key.Target) {
+			cache.evictsSkipPinned.Add(1)
+			continue
+		}
+		age := now - value.atime
+		if int64(age) > threshold {
+			ectx.age = age
+			cache.evictKeyCacheItem(ectx, key, int64(value.size), evictionExpire)
+		}
+	}
+	delCnt := len(ectx.todel)
+	if delCnt > 0 {
+		logger.Infof("Expire cache (%s): remaining %d blocks (%d MB), expired %d blocks (%d MB)",
+			cache.dir, len(cache.keys), cache.used>>20, delCnt, ectx.freed>>20)
+	}
+	cache.Unlock()
+	cache.revokeDel(ectx)
 }
 
 func (cache *diskCache) refreshCacheKeys() {
