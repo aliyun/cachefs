@@ -1775,9 +1775,18 @@ func (cache *diskCache) scanCached() {
 
 			// Add and announce cache, but skip announce previously cached blocks
 			atime := uint32(getAtime(fi).Unix())
-			cache.add(key, int32(fi.Size()), atime)
+
 			// tmpKeys are read-only, no need to lock
-			if _, ok := cache.tmpKeys[key]; !ok {
+			old, tracked := cache.tmpKeys[key]
+
+			// Only in-memory atime is updated on access, and leave the on-disk atime
+			// untouched, so keep whichever is newer instead of rolling tracked blocks
+			// back to their on-disk atime.
+			if tracked && old.atime > atime {
+				atime = old.atime
+			}
+			cache.add(key, int32(fi.Size()), atime)
+			if !tracked {
 				cache.store.rcache.announce(key.Target, 0, key.Blk)
 			}
 		}
