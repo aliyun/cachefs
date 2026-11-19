@@ -1131,8 +1131,8 @@ func TestDiskClearBurst(t *testing.T) {
 				// Two keys of size 100 each: used=200 > capacity=100.
 				// key1 has an older atime so it will always be evicted first
 				// regardless of map iteration order.
-				now := uint32(time.Now().UnixMilli())
-				cache.keys[CacheKey{"target", 1}] = cacheItem{size: 100, atime: now - 2000}
+				now := uint32(time.Now().Unix())
+				cache.keys[CacheKey{"target", 1}] = cacheItem{size: 100, atime: now - 2}
 				cache.keys[CacheKey{"target", 2}] = cacheItem{size: 100, atime: now}
 				cache.used = 200
 			},
@@ -1149,7 +1149,7 @@ func TestDiskClearBurst(t *testing.T) {
 			capacity: 100,
 			burstCap: 300,
 			setupFn: func(cache *diskCache) {
-				now := uint32(time.Now().UnixMilli())
+				now := uint32(time.Now().Unix())
 				cache.keys[CacheKey{"target", 1}] = cacheItem{size: 200, atime: now}
 				cache.used = 200
 			},
@@ -1163,8 +1163,8 @@ func TestDiskClearBurst(t *testing.T) {
 			capacity: 100,
 			burstCap: 300,
 			setupFn: func(cache *diskCache) {
-				now := uint32(time.Now().UnixMilli())
-				cache.keys[CacheKey{"t", 1}] = cacheItem{size: 100, atime: now - 2000}
+				now := uint32(time.Now().Unix())
+				cache.keys[CacheKey{"t", 1}] = cacheItem{size: 100, atime: now - 2}
 				cache.keys[CacheKey{"t", 2}] = cacheItem{size: 100, atime: now}
 				cache.used = 200
 				// Incomplete target: shouldSkip returns true for all keys of "t".
@@ -1216,8 +1216,8 @@ func TestDiskRemoveByPrefixKeepMultiplePrefixes(t *testing.T) {
 	evictPage.Acquire()
 	cache.pages[keepPageKey] = keepPage
 	cache.pages[evictPageKey] = evictPage
-	cache.keys[keepKey] = cacheItem{size: 30, atime: uint32(time.Now().UnixMilli())}
-	cache.keys[evictKey] = cacheItem{size: 40, atime: uint32(time.Now().UnixMilli())}
+	cache.keys[keepKey] = cacheItem{size: 30, atime: uint32(time.Now().Unix())}
+	cache.keys[evictKey] = cacheItem{size: 40, atime: uint32(time.Now().Unix())}
 	cache.used = 100
 
 	mockRCache.On("revoke", evictPageKey.Target, uint64(0), evictPageKey.Blk).Once()
@@ -1277,8 +1277,8 @@ func TestDiskSetCapacity(t *testing.T) {
 			setupFn: func(cache *diskCache) {
 				// Two keys of size 100 each: used=200 > new burstCap=100.
 				// key1 has an older atime so it will always be evicted first.
-				now := uint32(time.Now().UnixMilli())
-				cache.keys[CacheKey{"target", 1}] = cacheItem{size: 100, atime: now - 2000}
+				now := uint32(time.Now().Unix())
+				cache.keys[CacheKey{"target", 1}] = cacheItem{size: 100, atime: now - 2}
 				cache.keys[CacheKey{"target", 2}] = cacheItem{size: 100, atime: now}
 				cache.used = 200
 			},
@@ -1342,8 +1342,8 @@ func TestDiskSetCapacity(t *testing.T) {
 				cache.capacity = 100
 				cache.burstCap = 300
 				cache.store.config.InitialBurstSize = 0
-				now := uint32(time.Now().UnixMilli())
-				cache.keys[CacheKey{"target", 1}] = cacheItem{size: 100, atime: now - 2000}
+				now := uint32(time.Now().Unix())
+				cache.keys[CacheKey{"target", 1}] = cacheItem{size: 100, atime: now - 2}
 				cache.keys[CacheKey{"target", 2}] = cacheItem{size: 100, atime: now}
 				cache.used = 200
 			},
