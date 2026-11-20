@@ -718,7 +718,8 @@ func TestParsePinPaths(t *testing.T) {
 		result, _, _, _ := fs.parsePinPaths()
 		expected := []string{"/models/llama/", "/data/embeddings/"}
 		if len(result) != len(expected) {
-			t.Fatalf("expected %v, got %v", expected, result)
+			t.Errorf("expected %v, got %v", expected, result)
+			return
 		}
 		for i := range expected {
 			if result[i] != expected[i] {
@@ -732,7 +733,8 @@ func TestParsePinPaths(t *testing.T) {
 		result, _, _, _ := fs.parsePinPaths()
 		expected := []string{"/models/llama/", "/data/embeddings/"}
 		if len(result) != len(expected) {
-			t.Fatalf("expected %v, got %v", expected, result)
+			t.Errorf("expected %v, got %v", expected, result)
+			return
 		}
 		for i := range expected {
 			if result[i] != expected[i] {
@@ -800,7 +802,8 @@ func TestParsePinPaths(t *testing.T) {
 		dir := t.TempDir()
 		f := dir + "/pins.txt"
 		if err := os.WriteFile(f, []byte("/from/file/\n"), 0644); err != nil {
-			t.Fatalf("write pin file: %s", err)
+			t.Errorf("write pin file: %s", err)
+			return
 		}
 		cases := []struct {
 			name     string

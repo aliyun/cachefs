@@ -201,7 +201,8 @@ func TestShareQuotaZeroNewBytesBypassWaiter(t *testing.T) {
 	q.release(first)
 	select {
 	case err := <-queued:
-		t.Fatalf("queued request admitted while shared block still had a reference: %v", err)
+		t.Errorf("queued request admitted while shared block still had a reference: %v", err)
+		return
 	default:
 	}
 	q.release(second)

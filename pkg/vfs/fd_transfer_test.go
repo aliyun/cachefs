@@ -267,13 +267,15 @@ func TestFdTransferServerStopUnblocksAccept(t *testing.T) {
 	select {
 	case <-listener.acceptStarted:
 	case <-time.After(time.Second):
-		t.Fatal("serve did not enter Accept")
+		t.Error("serve did not enter Accept")
+		return
 	}
 	server.stop()
 	select {
 	case <-serveDone:
 	case <-time.After(time.Second):
-		t.Fatal("serve did not exit after stop")
+		t.Error("serve did not exit after stop")
+		return
 	}
 
 	server.Lock()

@@ -166,14 +166,16 @@ func TestStopWalking(t *testing.T) {
 	select {
 	case <-state.stopWalkCh:
 	default:
-		t.Fatal("stop walk signal should be closed")
+		t.Error("stop walk signal should be closed")
+		return
 	}
 
 	// A round that stopped doesn't leave the next one unable to stop.
 	state.resetStopWalk()
 	select {
 	case <-state.stopWalkCh:
-		t.Fatal("stop walk signal should be armed again after reset")
+		t.Error("stop walk signal should be armed again after reset")
+		return
 	default:
 	}
 	state.stopWalking("preload cancelled")

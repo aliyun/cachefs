@@ -390,7 +390,8 @@ func TestGenSourceSubpathsCmdOut(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "subpaths.txt")
 	if err := os.WriteFile(f, []byte("/from/file\n"), 0644); err != nil {
-		t.Fatalf("write subpath file: %s", err)
+		t.Errorf("write subpath file: %s", err)
+		return
 	}
 	cases := []struct {
 		name     string
@@ -648,7 +649,8 @@ func TestReloadSubpathInvalidatesSubdirCache(t *testing.T) {
 	listNames := func(ino meta.Ino) []string {
 		var entries []*meta.Entry
 		if err := cfsMeta.Readdir(meta.Background, ino, &entries); err != 0 {
-			t.Fatalf("Readdir(%d): %s", ino, err)
+			t.Errorf("Readdir(%d): %s", ino, err)
+			return nil
 		}
 		names := []string{}
 		for _, e := range entries {
@@ -664,7 +666,8 @@ func TestReloadSubpathInvalidatesSubdirCache(t *testing.T) {
 	var dirAIno meta.Ino
 	var attr meta.Attr
 	if err := cfsMeta.Lookup(meta.Background, meta.RootInode, "dirA", &dirAIno, &attr); err != 0 {
-		t.Fatalf("Lookup dirA: %s", err)
+		t.Errorf("Lookup dirA: %s", err)
+		return
 	}
 
 	// Prime dirA's cache: both children are allowed under "/dirA".

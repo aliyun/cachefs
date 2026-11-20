@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"sync"
@@ -616,7 +615,8 @@ func TestGetBlock(t *testing.T) {
 
 		mockFile0, err := os.CreateTemp("", "testfile")
 		if err != nil {
-			log.Fatalf("failed to create temp file: %v", err)
+			t.Errorf("failed to create temp file: %v", err)
+			return
 		}
 		defer os.Remove(mockFile0.Name())
 
@@ -747,7 +747,8 @@ func TestGetBlock(t *testing.T) {
 		}
 		mockFile, err := os.CreateTemp("", "testfile")
 		if err != nil {
-			log.Fatalf("failed to create temp file: %v", err)
+			t.Errorf("failed to create temp file: %v", err)
+			return
 		}
 		defer os.Remove(mockFile.Name())
 
