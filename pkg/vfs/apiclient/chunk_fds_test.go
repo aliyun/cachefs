@@ -490,7 +490,8 @@ func TestChunkFdsClose(t *testing.T) {
 		select {
 		case <-chunksDone:
 		case <-time.After(time.Second):
-			t.Fatal("Chunks blocked behind a slow Close")
+			t.Error("Chunks blocked behind a slow Close")
+			return
 		}
 
 		close(unblock)

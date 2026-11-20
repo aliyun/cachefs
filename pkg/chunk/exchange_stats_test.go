@@ -173,7 +173,8 @@ func TestExchangeStatsCountTriggerImmediateFlush(t *testing.T) {
 	// Check flushCh should be empty
 	select {
 	case <-stats.flushCh:
-		t.Fatal("flushCh should be empty before reaching threshold")
+		t.Error("flushCh should be empty before reaching threshold")
+		return
 	default:
 		// Expected
 	}
@@ -186,7 +187,8 @@ func TestExchangeStatsCountTriggerImmediateFlush(t *testing.T) {
 	case <-stats.flushCh:
 		// Expected - count threshold reached
 	default:
-		t.Fatal("flushCh should have signal after reaching count threshold")
+		t.Error("flushCh should have signal after reaching count threshold")
+		return
 	}
 
 	// Verify data is correct

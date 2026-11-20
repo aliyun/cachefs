@@ -830,7 +830,8 @@ func TestPopPending(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		select {
 		case <-got:
-			t.Fatal("popPending returned before any block was queued")
+			t.Error("popPending returned before any block was queued")
+			return
 		default:
 		}
 		k, p := add(c, "n")
@@ -842,7 +843,8 @@ func TestPopPending(t *testing.T) {
 		case w := <-got:
 			assert.Equal(t, k, w.key)
 		case <-time.After(2 * time.Second):
-			t.Fatal("popPending did not wake after a block was queued")
+			t.Error("popPending did not wake after a block was queued")
+			return
 		}
 	})
 }

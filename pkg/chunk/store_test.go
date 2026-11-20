@@ -67,7 +67,8 @@ func TestCacheKeyStringConcurrent(t *testing.T) {
 			for i := 0; i < 1000; i++ {
 				tc := &cases[(worker+i)%len(cases)]
 				if got := tc.key.String(); got != tc.want {
-					t.Fatalf("CacheKey.String() = %q, want %q", got, tc.want)
+					t.Errorf("CacheKey.String() = %q, want %q", got, tc.want)
+					return
 				}
 			}
 		})
@@ -86,7 +87,8 @@ func FuzzCacheKeyString(f *testing.F) {
 		key := CacheKey{Target: target, Blk: block}
 		want := fmt.Sprintf("%s/%d", target, block)
 		if got := key.String(); got != want {
-			t.Fatalf("CacheKey{%q, %d}.String() = %q, want %q", target, block, got, want)
+			t.Errorf("CacheKey{%q, %d}.String() = %q, want %q", target, block, got, want)
+			return
 		}
 	})
 }

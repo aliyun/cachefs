@@ -220,7 +220,8 @@ func TestAcquireRangeTask(t *testing.T) {
 		select {
 		case limiter <- struct{}{}:
 		default:
-			t.Fatal("range permit was not refunded")
+			t.Error("range permit was not refunded")
+			return
 		}
 	})
 }
