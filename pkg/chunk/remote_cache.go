@@ -68,6 +68,14 @@ var (
 		Name: "remote_server_upload_bytes",
 		Help: "uploaded bytes by remote cache server",
 	})
+	fallbackUploadCount = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "remote_server_fallback_upload_count",
+		Help: "uploaded block count through TCP fallback by remote cache server",
+	})
+	fallbackUploadBytes = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "remote_server_fallback_upload_bytes",
+		Help: "uploaded bytes through TCP fallback by remote cache server",
+	})
 	missCount = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "remote_server_miss_count",
 		Help: "cache miss count of remote cache server",
@@ -215,6 +223,8 @@ func initPackageMetrics(reg prometheus.Registerer) {
 	}
 	reg.MustRegister(uploadCount)
 	reg.MustRegister(uploadBytes)
+	reg.MustRegister(fallbackUploadCount)
+	reg.MustRegister(fallbackUploadBytes)
 	reg.MustRegister(missCount)
 	reg.MustRegister(missBytes)
 	reg.MustRegister(uploadTimeout)

@@ -18,11 +18,13 @@ package chunk
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
 	pb "github.com/aliyun/cachefs/pkg/rpc/cachefs"
 	"github.com/aliyun/cachefs/pkg/transfer"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -102,6 +104,124 @@ func TestTransportLoadUnregistersUnclaimedTransfer(t *testing.T) {
 			service.mu.Lock()
 			assert.Equal(t, []transfer.RequestID{1}, service.unregisterReqIDs)
 			service.mu.Unlock()
+			bcache.AssertExpectations(t)
+		})
+	}
+}
+
+func TestTransportLoadFallbackMetrics(t *testing.T) {
+	tests := []struct {
+		name             string
+		rdmaDisabled     bool
+		supportsFallback bool
+		useFallback      bool
+		hasFallback      bool
+		sharedFallback   bool
+		transport        string
+		loadFails        bool
+		recvErr          error
+		wantCode         codes.Code
+		wantFallback     bool
+		wantBlocks       float64
+	}{
+		{name: "normal RDMA", supportsFallback: true, hasFallback: true},
+		{name: "client fallback", supportsFallback: true, useFallback: true, hasFallback: true, wantFallback: true, wantBlocks: 1},
+		{name: "server fallback", rdmaDisabled: true, supportsFallback: true, hasFallback: true, wantFallback: true, wantBlocks: 1},
+		{name: "initialization fallback", rdmaDisabled: true, supportsFallback: true, sharedFallback: true, wantFallback: true, wantBlocks: 1},
+		{name: "TCP primary", transport: transfer.TCPTransport, supportsFallback: true, useFallback: true},
+		{name: "legacy client after initialization fallback", rdmaDisabled: true, hasFallback: true, wantCode: codes.FailedPrecondition},
+		{name: "fallback download unconfirmed", supportsFallback: true, useFallback: true, hasFallback: true, recvErr: io.EOF, wantFallback: true},
+		{name: "fallback rejected", rdmaDisabled: true, supportsFallback: true, wantCode: codes.FailedPrecondition},
+		{name: "cache load fails", supportsFallback: true, useFallback: true, hasFallback: true, loadFails: true, wantCode: codes.NotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			countBefore := testutil.ToFloat64(fallbackUploadCount)
+			bytesBefore := testutil.ToFloat64(fallbackUploadBytes)
+
+			page := NewPage([]byte("data"))
+			bcache := new(MockLocalCache)
+			switch {
+			case tt.wantCode == codes.FailedPrecondition:
+			case tt.loadFails:
+				bcache.On("load", "target", uint32(0), false).Return(nil, nil, errors.New("load failed")).Once()
+			default:
+				bcache.On("load", "target", uint32(0), false).Return(page, nil, nil).Once()
+			}
+
+			primaryAddr := "rdma:7712"
+			if tt.transport == transfer.TCPTransport {
+				primaryAddr = "tcp:7712"
+			}
+			primary := &mockTransferService{addr: primaryAddr, serverID: 7}
+			fallback := &mockTransferService{addr: "tcp:7713", serverID: 8}
+			if tt.sharedFallback {
+				primary.addr = "tcp:7713"
+				fallback = primary
+			}
+			transportType := tt.transport
+			if transportType == "" {
+				transportType = transfer.RDMATransport
+			}
+			trans := &transport{
+				config:       &remoteCacheConfig{blockSize: 4, serfGroup: "group", transport: transportType},
+				store:        &store{config: &StoreConfig{}, bcache: bcache},
+				service:      primary,
+				rdmaDisabled: tt.rdmaDisabled,
+			}
+			if tt.hasFallback || tt.sharedFallback {
+				trans.fallbackService = fallback
+			}
+
+			requests := []*pb.LoadRequest{{
+				Target: "target", BlockNum: 0, BlockSize: 4, Len: 4,
+				SerfGroup: "group", SupportsFallback: tt.supportsFallback, UseFallback: tt.useFallback,
+			}}
+			if tt.recvErr == nil {
+				requests = append(requests, &pb.LoadRequest{})
+			}
+			stream := &transportLoadTestStream{
+				ctx:      context.Background(),
+				requests: requests,
+				recvErr:  tt.recvErr,
+			}
+
+			err := trans.Load(stream)
+			switch {
+			case tt.recvErr != nil:
+				assert.ErrorIs(t, err, tt.recvErr)
+			case tt.wantCode != codes.OK:
+				assert.Equal(t, tt.wantCode, status.Code(err))
+			default:
+				assert.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.wantBlocks, testutil.ToFloat64(fallbackUploadCount)-countBefore)
+			assert.Equal(t, tt.wantBlocks*4, testutil.ToFloat64(fallbackUploadBytes)-bytesBefore)
+			if tt.wantCode != codes.OK {
+				assert.Zero(t, primary.registerCalls)
+				assert.Zero(t, fallback.registerCalls)
+				assert.Empty(t, primary.unregisterReqIDs)
+				assert.Empty(t, fallback.unregisterReqIDs)
+			} else if tt.wantFallback {
+				assert.Equal(t, 1, fallback.registerCalls)
+				assert.Equal(t, []transfer.RequestID{1}, fallback.unregisterReqIDs)
+				if fallback != primary {
+					assert.Zero(t, primary.registerCalls)
+					assert.Empty(t, primary.unregisterReqIDs)
+				}
+			} else {
+				assert.Equal(t, 1, primary.registerCalls)
+				assert.Equal(t, []transfer.RequestID{1}, primary.unregisterReqIDs)
+				if fallback != primary {
+					assert.Zero(t, fallback.registerCalls)
+					assert.Empty(t, fallback.unregisterReqIDs)
+				}
+			}
+			if tt.wantCode == codes.FailedPrecondition {
+				bcache.AssertNotCalled(t, "load", "target", uint32(0))
+			}
 			bcache.AssertExpectations(t)
 		})
 	}
