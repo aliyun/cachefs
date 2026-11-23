@@ -54,10 +54,15 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 		clientAddr, _, _ = net.SplitHostPort(p.Addr.String())
 	}
 
+	useFallbackService := false
 	defer func() {
 		if rerr == nil {
 			uploadCount.Inc()
 			uploadBytes.Add(float64(blklen))
+			if useFallbackService {
+				fallbackUploadCount.Inc()
+				fallbackUploadBytes.Add(float64(blklen))
+			}
 		} else {
 			missCount.Inc()
 			missBytes.Add(float64(blklen))
@@ -124,7 +129,7 @@ func (t *transport) Load(stream pb.CachefsCache_LoadServer) (rerr error) {
 		return status.Errorf(codes.Unknown, "data size mismatch (%d != %d)", blklen, dataLen)
 	}
 
-	useFallbackService := t.fallbackService != nil && (serverFallback || clientFallback)
+	useFallbackService = t.fallbackService != nil && (serverFallback || clientFallback)
 	uploadService := t.service
 	if useFallbackService {
 		uploadService = t.fallbackService
