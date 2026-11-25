@@ -143,12 +143,6 @@ void config_buffer_pool(pool_config conf) {
 }
 
 // rpc client
-// The pair owns the client_pools registry and the load_balancer built on it,
-// so that flush_client_pool can drain the idle connections of one address.
-using client_pool_type =
-    std::pair<std::unique_ptr<coro_io::client_pools<coro_rpc::coro_rpc_client>>,
-              std::optional<coro_io::load_balancer<coro_rpc::coro_rpc_client>>>;
-
 void *create_client_pool(char *addr, client_config conf) {
   std::vector<std::string_view> hosts{std::string_view(addr)};
   coro_io::client_pool<coro_rpc::coro_rpc_client>::pool_config pool_conf{};
@@ -205,26 +199,29 @@ void *create_client_pool(char *addr, client_config conf) {
             << ", connect retry count: " << pool_conf.connect_retry_count
             << ", local_ip: " << pool_conf.client_config.local_ip;
 
-  // create client_pools and a load_balancer.
-  // the load_balancer uses client_pools and will release all connections when it is deleted.
-  auto *pool = new client_pool_type(
-      std::make_unique<coro_io::client_pools<coro_rpc::coro_rpc_client>>(
-          pool_conf, coro_io::g_io_context_pool()),
-      std::optional<coro_io::load_balancer<coro_rpc::coro_rpc_client>>{});
-  pool->second = coro_io::load_balancer<coro_rpc::coro_rpc_client>::create(
-      hosts, {pool_conf}, {}, *pool->first);
-  return pool;
+  try {
+    auto ld = coro_io::load_balancer<coro_rpc::coro_rpc_client>::create(
+        hosts, {pool_conf});
+    auto ld_ptr = std::make_unique<decltype(ld)>(std::move(ld));
+    return ld_ptr.release();
+  } catch (const std::exception &e) {
+    ELOG_ERROR << "create load_balancer failed: " << e.what();
+    return nullptr;
+  }
 }
 
 void free_client_pool(void *pool) {
-  auto ptr = (client_pool_type *)pool;
+  auto ptr = (coro_io::load_balancer<coro_rpc::coro_rpc_client> *)pool;
   delete ptr;
 }
 
-uint64_t flush_client_pool(void *pool, char *addr) {
-  auto *p = (client_pool_type *)pool;
-  auto cp = p->first->at(std::string_view(addr));
-  return static_cast<uint64_t>(cp->clear());
+uint64_t flush_client_pool(void *pool) {
+  // A pool is one load balancer for a single peer address.
+  auto *ld = (coro_io::load_balancer<coro_rpc::coro_rpc_client> *)pool;
+  if (ld == nullptr) {
+    return 0;
+  }
+  return static_cast<uint64_t>(ld->clear());
 }
 
 rpc_result load(void *pool, load_request req_info, char *dest, uint64_t dest_len) {
@@ -236,7 +233,13 @@ rpc_result load(void *pool, load_request req_info, char *dest, uint64_t dest_len
     return ret;
   }
 
-  auto ld = &((client_pool_type *)pool)->second.value();
+  auto *ld = (coro_io::load_balancer<coro_rpc::coro_rpc_client> *)pool;
+  if (ld == nullptr) {
+    set_rpc_result(ret,
+                   coro_rpc::rpc_error(coro_rpc::errc::invalid_rpc_arguments,
+                                       "client pool is null or uninitialized"));
+    return ret;
+  }
   auto lazy = [&]() -> Lazy<void> {
     auto result =
         co_await ld->send_request([&](coro_rpc::coro_rpc_client &client,

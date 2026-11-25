@@ -528,7 +528,7 @@ func (ct *coroTransfer) downloadWithRetry(addr string, want int64, loadFn func(p
 
 	// Retry on stale connection
 	if client.pool != nil {
-		n := coro.FlushClientPool(client.pool, addr)
+		n := coro.FlushClientPool(client.pool)
 		logger.Infof("Coro transfer service: stale connection to %s, flushed %d stale clients, retrying: %v", addr, n, err)
 	} else {
 		logger.Infof("Coro transfer service: stale connection to %s, retrying: %v", addr, err)
@@ -577,7 +577,7 @@ func (ct *coroTransfer) EvictPeer(peerIPs []string) int {
 			continue
 		}
 		logger.Debugf("Coro transfer service: flushing client pool with addr %s", client.addr)
-		n := int(coro.FlushClientPool(client.pool, client.addr))
+		n := int(coro.FlushClientPool(client.pool))
 		flushedByIP[ip] += n
 	}
 
