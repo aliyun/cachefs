@@ -66,7 +66,7 @@ extern void stop_rpc_server(void *server);
 extern void config_buffer_pool(pool_config conf);
 extern void *create_client_pool(char *addr, client_config conf);
 extern void free_client_pool(void *pool);
-extern uint64_t flush_client_pool(void *pool, char *addr);
+extern uint64_t flush_client_pool(void *pool);
 extern rpc_result load(void *pool, load_request req_info, char *dest,
                        uint64_t dest_len);
 extern uint64_t global_memory_usage();

@@ -199,12 +199,9 @@ func FreeClientPool(p unsafe.Pointer) {
 	C.free_client_pool(p)
 }
 
-// Atomically drains all idle cached connections (stale or not) from client_pool
-// for the given server address.
-func FlushClientPool(p unsafe.Pointer, addr string) uint64 {
-	cAddr := C.CString(addr)
-	defer C.free(unsafe.Pointer(cAddr))
-	return uint64(C.flush_client_pool(p, cAddr))
+// Atomically drains all idle cached connections (stale or not) from client_pool.
+func FlushClientPool(p unsafe.Pointer) uint64 {
+	return uint64(C.flush_client_pool(p))
 }
 
 // RdmaMemUsage returns the current RDMA buffer pool memory usage in bytes.
