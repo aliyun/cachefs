@@ -36,8 +36,6 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/envoyproxy/protoc-gen-validate v0.10.1 h1:c0g45+xCJhdgFGw7a5QAfdS4byAbud7miNWJ1WwEVf8=
 github.com/envoyproxy/protoc-gen-validate v0.10.1/go.mod h1:DRjgyB0I43LtJapqN6NiRwroiAU2PaFuvk/vjgh61ss=
-github.com/erikdubbelboer/gspt v0.0.0-20210805194459-ce36a5128377 h1:gT+RM6gdTIAzMT7HUvmT5mL8SyG8Wx7iS3+L0V34Km4=
-github.com/erikdubbelboer/gspt v0.0.0-20210805194459-ce36a5128377/go.mod h1:v6o7m/E9bfvm79dE1iFiF+3T7zLBnrjYjkWMa1J+Hv0=
 github.com/eryugey/consistent v1.0.901 h1:baRvWBfjtVL7X4Nhl70/rcctbj/QRQQ8vTh0L3eGKgA=
 github.com/eryugey/consistent v1.0.901/go.mod h1:q7dJFnBGJSX7Q7J3SGPIm+MqAn2JjcJl7kPfrM7KoHY=
 github.com/eryugey/go-fuse/v2 v2.1.1-0.20260623160106-769c39fe00b3 h1:VXnzuKw1Vcll8kVnVyHGbCfI7sD0Tv2c/fOkQgLGBEE=

@@ -6,7 +6,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/containerd/ttrpc v1.2.7
 	github.com/envoyproxy/protoc-gen-validate v0.10.1
-	github.com/erikdubbelboer/gspt v0.0.0-20210805194459-ce36a5128377
 	github.com/eryugey/consistent v1.0.901
 	github.com/eryugey/go-fuse/v2 v2.1.1-0.20260623160106-769c39fe00b3
 	github.com/eryugey/serf v0.10.904
