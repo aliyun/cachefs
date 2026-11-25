@@ -18,7 +18,11 @@
 package cmd
 
 import (
+	"bytes"
+	"os"
+	"os/exec"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/aliyun/cachefs/pkg/utils"
@@ -61,5 +65,37 @@ func TestArgsOrder(t *testing.T) {
 			t.Errorf("expecte %v, but got %v", cases[i+1], oreded)
 			return
 		}
+	}
+}
+
+// TestProcEnviron verifies that package initialization preserves the original process environment.
+func TestProcEnviron(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc/self/environ is Linux-specific")
+	}
+	if os.Getenv("CACHEFS_TEST_PROC_ENVIRON") == "1" {
+		data, err := os.ReadFile("/proc/self/environ")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if !bytes.HasPrefix(data, []byte("CACHEFS_TEST_PROC_ENVIRON=1\x00")) {
+			t.Error("original process environment was modified")
+			return
+		}
+		return
+	}
+
+	executable, err := os.Executable()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	cmd := exec.Command(executable, "-test.run=^TestProcEnviron$")
+	cmd.Env = []string{"CACHEFS_TEST_PROC_ENVIRON=1", "SECOND_ENV=survives"}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Errorf("environment check failed: %v\n%s", err, output)
+		return
 	}
 }

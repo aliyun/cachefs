@@ -24,11 +24,9 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/aliyun/cachefs/pkg/utils"
 	"github.com/aliyun/cachefs/pkg/version"
-	"github.com/erikdubbelboer/gspt"
 	"github.com/google/gops/agent"
 	"github.com/google/uuid"
 	"github.com/pyroscope-io/client/pyroscope"
@@ -39,8 +37,6 @@ import (
 var logger = utils.GetLogger("cachefs")
 
 func Main(args []string) error {
-	// we have to call this because gspt removes all arguments
-	gspt.SetProcTitle(strings.Join(os.Args, " "))
 	cli.VersionFlag = &cli.BoolFlag{
 		Name: "version", Aliases: []string{"V"},
 		Usage: "print version only",
