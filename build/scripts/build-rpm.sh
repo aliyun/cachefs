@@ -62,7 +62,21 @@ install -m 0644 $srcroot/NOTICE %{buildroot}/usr/share/licenses/cachefs/NOTICE
 /usr/share/licenses/cachefs/NOTICE
 
 %changelog
-* Tue Sep 29 2026 Eryu Guan <eguan@linux.alibaba.com> - v3.7
+* Wed Nov 25 2026 Eryu Guan <eguan@linux.alibaba.com> - v1.1
+- coro_rpc: use global client pools to reduce RDMA buffer usage (#11)
+- cmd: preserve process environment by dropping gspt (#10)
+- chunk: add server-side RDMA fallback upload metrics (#9)
+- test: replace fatal assertions with error returns (#8)
+- chunk: keep in-memory atime across disk cache rescans (#7)
+- chunk: expire cache blocks by --cache-expire not check interval (#7)
+- chunk: track disk cache atime in seconds (#7)
+- chunk: format cache keys with fewer allocations (#6)
+- cmd: disable debug agents by default for short-lived commands (#5)
+- chunk: evaluate fallback inside transport client (#4)
+- chunk: route P2P downloads by RDMA reachability group (#4)
+- chunk: support TCP-only peers after RDMA initialization failure (#4)
+
+* Tue Sep 29 2026 Eryu Guan <eguan@linux.alibaba.com> - v1.0
 - initial open source release
 
 EOF
